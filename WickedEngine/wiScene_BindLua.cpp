@@ -6368,12 +6368,15 @@ int SpringComponent_BindLua::GetWindAffection(lua_State* L)
 
 
 Luna<ScriptComponent_BindLua>::FunctionType ScriptComponent_BindLua::methods[] = {
-	lunamethod(ScriptComponent_BindLua, CreateFromFile),
-	lunamethod(ScriptComponent_BindLua, Play),
-	lunamethod(ScriptComponent_BindLua, IsPlaying),
-	lunamethod(ScriptComponent_BindLua, SetPlayOnce),
-	lunamethod(ScriptComponent_BindLua, Stop),
-	{ NULL, NULL }
+        lunamethod(ScriptComponent_BindLua, CreateFromFile),
+        lunamethod(ScriptComponent_BindLua, Play),
+       lunamethod(ScriptComponent_BindLua, IsPlaying),
+       lunamethod(ScriptComponent_BindLua, SetPlayOnce),
+       lunamethod(ScriptComponent_BindLua, Stop),
+       lunamethod(ScriptComponent_BindLua, CallFunction),
+       lunamethod(ScriptComponent_BindLua, GetVariable),
+       lunamethod(ScriptComponent_BindLua, SetVariable),
+        { NULL, NULL }
 };
 Luna<ScriptComponent_BindLua>::PropertyType ScriptComponent_BindLua::properties[] = {
 	{ NULL, NULL }
@@ -6415,8 +6418,86 @@ int ScriptComponent_BindLua::SetPlayOnce(lua_State* L)
 }
 int ScriptComponent_BindLua::Stop(lua_State* L)
 {
-	component->Stop();
-	return 0;
+        component->Stop();
+        return 0;
+}
+
+int ScriptComponent_BindLua::CallFunction(lua_State* L)
+{
+       int argc = wi::lua::SGetArgCount(L);
+       if (argc > 0)
+       {
+               std::string name = wi::lua::SGetString(L, 1);
+               wi::vector<wi::scene::ScriptComponent::ScriptParam> params;
+               for (int i = 2; i <= argc; ++i)
+               {
+                       switch (wi::lua::SGetType(L, i))
+                       {
+                       case LUA_TNUMBER:
+                               params.emplace_back(wi::lua::SGetDouble(L, i));
+                               break;
+                       case LUA_TBOOLEAN:
+                               params.emplace_back(wi::lua::SGetBool(L, i));
+                               break;
+                       case LUA_TSTRING:
+                               params.emplace_back(std::string(wi::lua::SGetString(L, i)));
+                               break;
+                       default:
+                               params.emplace_back(); // nil
+                               break;
+                       }
+               }
+               component->CallFunction(name, params);
+       }
+       else
+       {
+               wi::lua::SError(L, "CallFunction(string name) not enough arguments!");
+       }
+       return 0;
+}
+
+int ScriptComponent_BindLua::GetVariable(lua_State* L)
+{
+        int argc = wi::lua::SGetArgCount(L);
+        if (argc > 0)
+        {
+                double value = component->GetVariable(wi::lua::SGetString(L, 1));
+                wi::lua::SSetDouble(L, value);
+                return 1;
+        }
+        wi::lua::SError(L, "GetVariable(string name) not enough arguments!");
+        return 0;
+}
+
+int ScriptComponent_BindLua::SetVariable(lua_State* L)
+{
+       int argc = wi::lua::SGetArgCount(L);
+       if (argc > 1)
+       {
+               std::string name = wi::lua::SGetString(L, 1);
+               wi::scene::ScriptComponent::ScriptParam param;
+               switch (wi::lua::SGetType(L, 2))
+               {
+               case LUA_TNUMBER:
+                       param = wi::scene::ScriptComponent::ScriptParam(wi::lua::SGetDouble(L, 2));
+                       break;
+               case LUA_TBOOLEAN:
+                       param = wi::scene::ScriptComponent::ScriptParam(wi::lua::SGetBool(L, 2));
+                       break;
+               case LUA_TSTRING:
+                       param = wi::scene::ScriptComponent::ScriptParam(std::string(wi::lua::SGetString(L, 2)));
+                       break;
+               default:
+                       param = wi::scene::ScriptComponent::ScriptParam();
+                       break;
+               }
+               component->SetVariable(name, param);
+       }
+       else
+       {
+               wi::lua::SError(L, "SetVariable(string name, value) not enough arguments!");
+       }
+       return 0;
 }
 
 

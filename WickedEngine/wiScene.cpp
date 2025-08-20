@@ -2195,17 +2195,20 @@ namespace wi::scene
 							case AnimationComponent::AnimationChannel::Path::SOUND_STOP:
 								target_sound->Stop();
 								break;
-							case AnimationComponent::AnimationChannel::Path::SCRIPT_PLAY:
-								target_script->Play();
-								break;
-							case AnimationComponent::AnimationChannel::Path::SCRIPT_STOP:
-								target_script->Stop();
-								break;
-							default:
-								break;
-							}
-						}
-					}
+                                                        case AnimationComponent::AnimationChannel::Path::SCRIPT_PLAY:
+                                                                target_script->Play();
+                                                                break;
+                                                        case AnimationComponent::AnimationChannel::Path::SCRIPT_STOP:
+                                                                target_script->Stop();
+                                                                break;
+                                                       case AnimationComponent::AnimationChannel::Path::SCRIPT_CALL:
+                                                               target_script->CallFunction(channel.script_name);
+                                                               break;
+                                                        default:
+                                                                break;
+                                                        }
+                                                }
+                                        }
 					else
 					{
 						// Path data interpolation:
@@ -2652,11 +2655,11 @@ namespace wi::scene
 						}
 					}
 
-					if (target_camera != nullptr)
-					{
-						switch (channel.path)
-						{
-						case AnimationComponent::AnimationChannel::Path::CAMERA_FOV:
+                                        if (target_camera != nullptr)
+                                        {
+                                                switch (channel.path)
+                                                {
+                                                case AnimationComponent::AnimationChannel::Path::CAMERA_FOV:
 						{
 							target_camera->fov = wi::math::Lerp(target_camera->fov, interpolator.f, t);
 						}
@@ -2676,14 +2679,24 @@ namespace wi::scene
 							target_camera->aperture_shape = wi::math::Lerp(target_camera->aperture_shape, interpolator.f2, t);
 						}
 						break;
-						default:
-							break;
-						}
-					}
+                                                default:
+                                                        break;
+                                                }
+                                        }
 
-					if (target_material != nullptr)
-					{
-						target_material->SetDirty();
+                                        if (target_script != nullptr)
+                                        {
+                                                if (channel.path == AnimationComponent::AnimationChannel::Path::SCRIPT_SET_VARIABLE)
+                                                {
+                                                        double current = target_script->GetVariable(channel.script_name);
+                                                        double result = wi::math::Lerp(current, (double)interpolator.f, t);
+                                                        target_script->SetVariable(channel.script_name, ScriptComponent::ScriptParam(result));
+                                                }
+                                        }
+
+                                        if (target_material != nullptr)
+                                        {
+                                                target_material->SetDirty();
 
 						switch (channel.path)
 						{
@@ -5440,29 +5453,55 @@ namespace wi::scene
 			ScriptComponent& script = scripts[i];
 			Entity entity = scripts.GetEntity(i);
 
-			if (script.IsPlaying())
-			{
-				if (script.resource.IsValid() && (script.script.empty() || script.script_hash != script.resource.GetScriptHash()))
-				{
-					script.script.clear();
-					script.script_hash = script.resource.GetScriptHash();
-					std::string str = script.resource.GetScript();
-					wi::lua::AttachScriptParameters(str, script.filename, wi::lua::GeneratePID(), "local function GetEntity() return " + std::to_string(entity) + "; end;", "");
-					wi::lua::CompileText(str, script.script);
-				}
-				if (!script.script.empty())
-				{
-					wi::lua::RunBinaryData(script.script.data(), script.script.size(), script.filename.c_str());
-				}
+                       if (script.IsPlaying())
+                       {
+                               if (script.resource.IsValid() && (script.instance == nullptr || script.script_hash != script.resource.GetScriptHash()))
+                               {
+                                       script.script_hash = script.resource.GetScriptHash();
+                                       std::string str = script.resource.GetScript();
+                                       wi::lua::AttachScriptParameters(str, script.filename, wi::lua::GeneratePID(), "local function GetEntity() return " + std::to_string(entity) + "; end;", "");
 
-				if (script.IsPlayingOnlyOnce())
-				{
-					script.Stop();
-				}
-			}
-		}
-		wi::profiler::EndRange(range);
-	}
+                                       lua_State* L = wi::lua::GetLuaState();
+                                       script.instance = lua_newthread(L);
+                                       lua_newtable(script.instance);
+                                       lua_newtable(script.instance);
+                                       lua_pushglobaltable(script.instance);
+                                       lua_setfield(script.instance, -2, "__index");
+                                       lua_setmetatable(script.instance, -2);
+                                       lua_rawseti(script.instance, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
+
+                                       if (luaL_loadbuffer(script.instance, str.c_str(), str.length(), script.filename.c_str()) == LUA_OK)
+                                       {
+                                               if (lua_pcall(script.instance, 0, 0, 0) != LUA_OK)
+                                               {
+                                                       wi::lua::PostErrorMsg(script.instance);
+                                               }
+                                       }
+                                       else
+                                       {
+                                               wi::lua::PostErrorMsg(script.instance);
+                                       }
+                               }
+
+                               if (script.instance != nullptr)
+                               {
+                                       if (!(script._flags & ScriptComponent::STARTED))
+                                       {
+                                               script.CallFunction("OnStart");
+                                               script._flags |= ScriptComponent::STARTED;
+                                       }
+
+                                       script.CallFunction("Update");
+
+                                       if (script.IsPlayingOnlyOnce())
+                                       {
+                                               script.Stop();
+                                       }
+                               }
+                       }
+               }
+               wi::profiler::EndRange(range);
+       }
 	void Scene::RunSpriteUpdateSystem(wi::jobsystem::context& ctx)
 	{
 		wi::jobsystem::Dispatch(ctx, (uint32_t)sprites.GetCount(), small_subtask_groupsize, [&](wi::jobsystem::JobArgs args) {

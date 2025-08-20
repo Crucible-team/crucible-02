@@ -571,6 +571,11 @@ It is expected that an entity that has DecalComponent, also has TransformCompone
 #### AnimationComponent
 [[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 
+Animation channels can interact with ScriptComponents:
+
+- `SCRIPT_CALL` events invoke a script function by name when the keyframe is reached.
+- `SCRIPT_SET_VARIABLE` channels drive a numeric script variable over time.
+
 #### WeatherComponent
 [[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 
@@ -596,6 +601,15 @@ The collider component will specify a collider shape to be used in simple fake p
 #### ScriptComponent
 [[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 ScriptComponent can reference a lua script and run it every frame, while also providing some additional data to script like a local GetEntity() function. The script can be written to reference additional component data by using its unique GetEntity() function. A ScriptComponent can also call other scripts, which can be used to implement multiple scripts on one entity.
+
+Each component now keeps its own persistent lua state. When the component starts playing, the script is executed once and subsequent frames will reuse the same state. If the script defines an `Update()` function, it will be invoked automatically every frame.
+
+The component exposes helper methods for interacting with the stored state:
+
+- `OnStart()` &ndash; optional function called automatically the first time the component begins playing.
+- `CallFunction(name, ...)` &ndash; invoke a function inside the script by name with optional arguments.
+- `GetVariable(name)` &ndash; query a numeric global variable from the script.
+- `SetVariable(name, value)` &ndash; set a global variable inside the script state.
 
 #### Scene
 [[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)

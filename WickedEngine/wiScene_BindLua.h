@@ -978,14 +978,17 @@ namespace wi::lua::scene
 		static Luna<ScriptComponent_BindLua>::PropertyType properties[];
 
 		ScriptComponent_BindLua(wi::scene::ScriptComponent* component) :component(component) {}
-		ScriptComponent_BindLua(lua_State* L) : component(&owning) {}
+                ScriptComponent_BindLua(lua_State* L) : component(&owning) {}
 
-		int CreateFromFile(lua_State* L);
-		int Play(lua_State* L);
-		int IsPlaying(lua_State* L);
-		int SetPlayOnce(lua_State* L);
-		int Stop(lua_State* L);
-	};
+                int CreateFromFile(lua_State* L);
+               int Play(lua_State* L);
+               int IsPlaying(lua_State* L);
+               int SetPlayOnce(lua_State* L);
+               int Stop(lua_State* L);
+               int CallFunction(lua_State* L);
+               int GetVariable(lua_State* L);
+               int SetVariable(lua_State* L);
+       };
 
 	class RigidBodyPhysicsComponent_BindLua
 	{

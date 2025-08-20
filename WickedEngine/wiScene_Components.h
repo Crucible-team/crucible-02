@@ -17,6 +17,8 @@
 #include "wiPathQuery.h"
 #include "wiAllocator.h"
 
+struct lua_State;
+
 namespace wi::scene
 {
 
@@ -1675,14 +1677,16 @@ namespace wi::scene
 				CAMERA_FOV,
 				CAMERA_FOCAL_LENGTH,
 				CAMERA_APERTURE_SIZE,
-				CAMERA_APERTURE_SHAPE,
-				// additional camera paths can go here...
-				_CAMERA_RANGE_END = CAMERA_FOV + 1000,
+                                CAMERA_APERTURE_SHAPE,
+                                // additional camera paths can go here...
+                                _CAMERA_RANGE_END = CAMERA_FOV + 1000,
 
-				SCRIPT_PLAY,
-				SCRIPT_STOP,
-				// additional script paths can go here...
-				_SCRIPT_RANGE_END = SCRIPT_PLAY + 1000,
+                                SCRIPT_PLAY,
+                                SCRIPT_STOP,
+                                SCRIPT_CALL,
+                                SCRIPT_SET_VARIABLE,
+                                // additional script paths can go here...
+                                _SCRIPT_RANGE_END = SCRIPT_PLAY + 1000,
 
 				MATERIAL_COLOR,
 				MATERIAL_EMISSIVE,
@@ -1696,22 +1700,23 @@ namespace wi::scene
 				UNKNOWN,
 			} path = Path::UNKNOWN;
 
-			enum class PathDataType
-			{
-				Event,
-				Float,
-				Float2,
-				Float3,
-				Float4,
-				Weights,
+                        enum class PathDataType
+                        {
+                                Event,
+                                Float,
+                                Float2,
+                                Float3,
+                                Float4,
+                                Weights,
 
-				Count,
-			};
-			PathDataType GetPathDataType() const;
+                                Count,
+                        };
+                        PathDataType GetPathDataType() const;
 
-			// Non-serialized attributes:
-			mutable int next_event = 0;
-		};
+                        // Non-serialized attributes:
+                        mutable int next_event = 0;
+                        std::string script_name;
+                };
 		struct AnimationSampler
 		{
 			enum FLAGS
@@ -2040,34 +2045,84 @@ namespace wi::scene
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
 	};
 
-	struct ScriptComponent
-	{
-		enum FLAGS
-		{
-			EMPTY = 0,
-			PLAYING = 1 << 0,
-			PLAY_ONCE = 1 << 1,
-		};
-		uint32_t _flags = EMPTY;
+        struct ScriptComponent
+        {
+                enum FLAGS
+                {
+                        EMPTY = 0,
+                        PLAYING = 1 << 0,
+                        PLAY_ONCE = 1 << 1,
+                        STARTED = 1 << 2,
+                };
+                uint32_t _flags = EMPTY;
 
 		std::string filename;
 
 		// Non-serialized attributes:
-		wi::vector<uint8_t> script; // compiled script binary data
-		wi::Resource resource;
-		size_t script_hash = 0;
+               wi::vector<uint8_t> script; // compiled script binary data
+               wi::Resource resource;
+               size_t script_hash = 0;
 
-		constexpr void Play() { _flags |= PLAYING; }
-		constexpr void SetPlayOnce(bool once = true) { if (once) { _flags |= PLAY_ONCE; } else { _flags &= ~PLAY_ONCE; } }
-		constexpr void Stop() { _flags &= ~PLAYING; }
+               // Persistent lua state for this component:
+               lua_State* instance = nullptr;
+
+                constexpr void Play() { _flags |= PLAYING; _flags &= ~STARTED; }
+                constexpr void SetPlayOnce(bool once = true) { if (once) { _flags |= PLAY_ONCE; } else { _flags &= ~PLAY_ONCE; } }
+                constexpr void Stop() { _flags &= ~PLAYING; }
 
 		constexpr bool IsPlaying() const { return _flags & PLAYING; }
 		constexpr bool IsPlayingOnlyOnce() const { return _flags & PLAY_ONCE; }
 
-		void CreateFromFile(const std::string& filename);
+               void CreateFromFile(const std::string& filename);
 
-		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
-	};
+               struct ScriptParam
+               {
+                       enum class Type
+                       {
+                               NIL,
+                               INT,
+                               FLOAT,
+                               DOUBLE,
+                               STRING,
+                               BOOL,
+                       };
+                       Type type = Type::NIL;
+                       int i = 0;
+                       float f = 0;
+                       double d = 0;
+                       bool b = false;
+                       std::string s;
+                       ScriptParam() = default;
+                       ScriptParam(int v) : type(Type::INT), i(v) {}
+                       ScriptParam(float v) : type(Type::FLOAT), f(v) {}
+                       ScriptParam(double v) : type(Type::DOUBLE), d(v) {}
+                       ScriptParam(bool v) : type(Type::BOOL), b(v) {}
+                       ScriptParam(const std::string& v) : type(Type::STRING), s(v) {}
+                       ScriptParam(const char* v) : type(Type::STRING), s(v) {}
+               };
+
+               // Invoke a lua function from the stored state with optional arguments
+               void CallFunction(const std::string& name) const;
+               void CallFunction(const std::string& name, const wi::vector<ScriptParam>& params) const;
+               template<typename... Args>
+               void CallFunction(const std::string& name, Args... args) const
+               {
+                       wi::vector<ScriptParam> params;
+                       params.reserve(sizeof...(args));
+                       (params.emplace_back(args), ...);
+                       CallFunction(name, params);
+               }
+
+               // Retrieve a numeric global variable from the stored state
+               double GetVariable(const std::string& name) const;
+
+               // Set a global variable in the stored state
+               void SetVariable(const std::string& name, const ScriptParam& param) const;
+               template<typename T>
+               void SetVariable(const std::string& name, T value) const { SetVariable(name, ScriptParam(value)); }
+
+               void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
+       };
 
 	struct ExpressionComponent
 	{

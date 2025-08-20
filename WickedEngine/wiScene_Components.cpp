@@ -2288,9 +2288,12 @@ namespace wi::scene
 		case wi::scene::AnimationComponent::AnimationChannel::Path::CAMERA_APERTURE_SHAPE:
 			return PathDataType::Float2;
 
-		case wi::scene::AnimationComponent::AnimationChannel::Path::SCRIPT_PLAY:
-		case wi::scene::AnimationComponent::AnimationChannel::Path::SCRIPT_STOP:
-			return PathDataType::Event;
+               case wi::scene::AnimationComponent::AnimationChannel::Path::SCRIPT_PLAY:
+               case wi::scene::AnimationComponent::AnimationChannel::Path::SCRIPT_STOP:
+               case wi::scene::AnimationComponent::AnimationChannel::Path::SCRIPT_CALL:
+                       return PathDataType::Event;
+               case wi::scene::AnimationComponent::AnimationChannel::Path::SCRIPT_SET_VARIABLE:
+                       return PathDataType::Float;
 
 		case wi::scene::AnimationComponent::AnimationChannel::Path::MATERIAL_COLOR:
 		case wi::scene::AnimationComponent::AnimationChannel::Path::MATERIAL_EMISSIVE:
@@ -2672,12 +2675,102 @@ namespace wi::scene
 		aperture_shape = wi::math::Lerp(a.aperture_shape, b.aperture_shape, t);
 	}
 
-	void ScriptComponent::CreateFromFile(const std::string& filename)
-	{
-		this->filename = filename;
-		resource = wi::resourcemanager::Load(filename);
-		script.clear(); // will be created on first Update()
-	}
+void ScriptComponent::CreateFromFile(const std::string& filename)
+{
+        this->filename = filename;
+        resource = wi::resourcemanager::Load(filename);
+        script.clear(); // will be created on first Update()
+}
+
+void ScriptComponent::CallFunction(const std::string& name) const
+{
+        CallFunction(name, {});
+}
+
+void ScriptComponent::CallFunction(const std::string& name, const wi::vector<ScriptParam>& params) const
+{
+        if (instance == nullptr)
+                return;
+
+        lua_getglobal(instance, name.c_str());
+        if (lua_isfunction(instance, -1))
+        {
+                for (const ScriptParam& p : params)
+                {
+                        switch (p.type)
+                        {
+                        case ScriptParam::Type::INT:
+                                wi::lua::SSetInt(instance, p.i);
+                                break;
+                        case ScriptParam::Type::FLOAT:
+                                wi::lua::SSetFloat(instance, p.f);
+                                break;
+                        case ScriptParam::Type::DOUBLE:
+                                wi::lua::SSetDouble(instance, p.d);
+                                break;
+                        case ScriptParam::Type::STRING:
+                                wi::lua::SSetString(instance, p.s.c_str());
+                                break;
+                        case ScriptParam::Type::BOOL:
+                                wi::lua::SSetBool(instance, p.b);
+                                break;
+                        default:
+                                wi::lua::SSetNull(instance);
+                                break;
+                        }
+                }
+
+                if (lua_pcall(instance, (int)params.size(), 0, 0) != LUA_OK)
+                {
+                        wi::lua::PostErrorMsg(instance);
+                }
+        }
+        else
+        {
+                lua_pop(instance, 1);
+        }
+}
+
+double ScriptComponent::GetVariable(const std::string& name) const
+{
+        if (instance == nullptr)
+                return 0;
+
+        lua_getglobal(instance, name.c_str());
+        double value = wi::lua::SGetDouble(instance, -1);
+        lua_pop(instance, 1);
+        return value;
+}
+
+void ScriptComponent::SetVariable(const std::string& name, const ScriptParam& param) const
+{
+       if (instance == nullptr)
+               return;
+
+       switch (param.type)
+       {
+       case ScriptParam::Type::INT:
+               wi::lua::SSetInt(instance, param.i);
+               break;
+       case ScriptParam::Type::FLOAT:
+               wi::lua::SSetFloat(instance, param.f);
+               break;
+       case ScriptParam::Type::DOUBLE:
+               wi::lua::SSetDouble(instance, param.d);
+               break;
+       case ScriptParam::Type::STRING:
+               wi::lua::SSetString(instance, param.s.c_str());
+               break;
+       case ScriptParam::Type::BOOL:
+               wi::lua::SSetBool(instance, param.b);
+               break;
+       default:
+               wi::lua::SSetNull(instance);
+               break;
+       }
+
+       lua_setglobal(instance, name.c_str());
+}
 
 	void SoundComponent::Play()
 	{
