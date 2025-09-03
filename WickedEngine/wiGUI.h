@@ -1047,6 +1047,17 @@ namespace wi::gui
 		ScrollBar scrollbar;
 	};
 
+	// Utility: draw a thick cubic Bezier wire in GUI space using the colored GUI pipeline.
+	// The positions are in screen space (same as other widgets), and the wire will be
+	// transformed by the GUI projection internally. Caller should apply scissor if needed.
+	void DrawWireBezierStrip(
+		const XMFLOAT2& from,
+		const XMFLOAT2& to,
+		float thickness,
+		const XMFLOAT4& color,
+		const wi::Canvas& canvas,
+		wi::graphics::CommandList cmd);
+
 }
 
 template<>

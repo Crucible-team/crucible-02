@@ -152,19 +152,11 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
             ey = target_node->window.translation.y + target_node->window.scale.y * 0.5f;
           }
 
-          const float dx = ex - sx;
-          const float dy = ey - sy;
-          const float length = wi::math::Distance(XMFLOAT2(sx, sy), XMFLOAT2(ex, ey));
-          const float angle = std::atan2(dy, dx);
-          const XMFLOAT2 mid((sx + ex) * 0.5f, (sy + ey) * 0.5f);
-
-          wi::image::Params wire;
-          wire.pos = XMFLOAT3(mid.x, mid.y, 0);
-          wire.siz = XMFLOAT2(std::max(1.0f, length), 2.0f);
-          wire.pivot = XMFLOAT2(0.5f, 0.5f);
-          wire.rotation = angle;
-          wire.color = XMFLOAT4(0.6f, 1.0f, 0.6f, 1);
-          wi::image::Draw(nullptr, wire, cmd);
+          wi::gui::DrawWireBezierStrip(
+            XMFLOAT2(sx, sy), XMFLOAT2(ex, ey),
+            2.0f,
+            XMFLOAT4(0.6f, 1.0f, 0.6f, 1),
+            canvas, cmd);
         }
       }
     }

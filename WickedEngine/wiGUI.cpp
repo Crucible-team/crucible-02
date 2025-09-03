@@ -51,6 +51,98 @@ namespace wi::gui
 		return internal_state;
 	}
 
+	void DrawWireBezierStrip(
+		const XMFLOAT2& from,
+		const XMFLOAT2& to,
+		float thickness,
+		const XMFLOAT4& color,
+		const wi::Canvas& canvas,
+		wi::graphics::CommandList cmd)
+	{
+		using wi::graphics::GraphicsDevice;
+		GraphicsDevice* device = wi::graphics::GetDevice();
+
+		// Bind the simple colored pipeline used by other GUI custom draws
+		device->BindPipelineState(&gui_internal().PSO_colored, cmd);
+
+		// Build bezier strip vertices
+		struct Vertex { XMFLOAT4 pos; XMFLOAT4 col; };
+		constexpr int segments = 24;
+		wi::vector<Vertex> verts;
+		verts.reserve((segments + 1) * 2);
+
+		auto bezier = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
+			const float it = 1.0f - t;
+			const float a = it * it * it;
+			const float b = 3.0f * it * it * t;
+			const float c = 3.0f * it * t * t;
+			const float d = t * t * t;
+			return XMFLOAT2(
+				a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+				a * p0.y + b * p1.y + c * p2.y + d * p3.y
+			);
+		};
+		auto bezier_deriv = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
+			const float it = 1.0f - t;
+			// 3*(1-t)^2*(p1-p0) + 6*(1-t)*t*(p2-p1) + 3*t^2*(p3-p2)
+			XMFLOAT2 r;
+			r.x = 3.0f * it * it * (p1.x - p0.x) + 6.0f * it * t * (p2.x - p1.x) + 3.0f * t * t * (p3.x - p2.x);
+			r.y = 3.0f * it * it * (p1.y - p0.y) + 6.0f * it * t * (p2.y - p1.y) + 3.0f * t * t * (p3.y - p2.y);
+			return r;
+		};
+
+		XMFLOAT2 p0 = from;
+		XMFLOAT2 p3 = to;
+		float dx = std::abs(p3.x - p0.x);
+		dx = std::max(dx * 0.35f, 20.0f);
+		XMFLOAT2 p1 = XMFLOAT2(p0.x + dx, p0.y);
+		XMFLOAT2 p2 = XMFLOAT2(p3.x - dx, p3.y);
+
+		float half = std::max(1.0f, thickness * 0.5f);
+		XMFLOAT2 prevN = XMFLOAT2(0, -1);
+		for (int i = 0; i <= segments; ++i)
+		{
+			float t = (float)i / (float)segments;
+			XMFLOAT2 pt = bezier(p0, p1, p2, p3, t);
+			XMFLOAT2 tg = bezier_deriv(p0, p1, p2, p3, t);
+			float len = std::sqrt(tg.x * tg.x + tg.y * tg.y);
+			XMFLOAT2 N = prevN;
+			if (len > 0.0001f)
+			{
+				N = XMFLOAT2(-tg.y / len, tg.x / len);
+				prevN = N;
+			}
+
+			XMFLOAT4 col = color;
+			// Optional: soften ends
+			if (i == 0 || i == segments)
+			{
+				col.w *= 0.9f;
+			}
+
+			// left and right verts
+			verts.push_back({ XMFLOAT4(pt.x - N.x * half, pt.y - N.y * half, 0, 1), col });
+			verts.push_back({ XMFLOAT4(pt.x + N.x * half, pt.y + N.y * half, 0, 1), col });
+		}
+
+		// Upload and draw as a triangle strip
+		const XMMATRIX Projection = canvas.GetProjection();
+		MiscCB cb;
+		XMStoreFloat4x4(&cb.g_xTransform, XMMatrixIdentity() * Projection);
+		cb.g_xColor = float4(1, 1, 1, 1);
+		device->BindDynamicConstantBuffer(cb, CBSLOT_RENDERER_MISC, cmd);
+
+		size_t alloc_size = sizeof(Vertex) * verts.size();
+		auto alloc = device->AllocateGPU(alloc_size, cmd);
+		std::memcpy(alloc.data, verts.data(), alloc_size);
+
+		const wi::graphics::GPUBuffer* vbs[] = { &alloc.buffer };
+		const uint32_t strides[] = { sizeof(Vertex) };
+		const uint64_t offsets[] = { alloc.offset };
+		device->BindVertexBuffers(vbs, 0, 1, strides, offsets, cmd);
+		device->Draw((uint32_t)verts.size(), 0, cmd);
+	}
+
 	// This is used so that elements that support scroll could disable other scrolling elements:
 	//	As opposed to click and other interaction types, we don't want to disable scroll on every focused widget
 	//	because that would block scrolling the parent if a child element is hovered
