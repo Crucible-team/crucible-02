@@ -1116,6 +1116,18 @@ void EditorComponent::Load()
 	});
 	topmenuWnd.AddWidget(&profilerButton);
 
+	nodeEditorButton.Create("Node Editor");
+	nodeEditorButton.SetLocalizationEnabled(wi::gui::LocalizationEnabled::Tooltip);
+	nodeEditorButton.SetShadowRadius(2);
+	nodeEditorButton.font.params.shadowColor = wi::Color::Transparent();
+	nodeEditorButton.SetTooltip("Open the node editor");
+	nodeEditorButton.SetColor(wi::Color(50, 160, 200, 180), wi::gui::WIDGETSTATE::IDLE);
+	nodeEditorButton.SetColor(wi::Color(120, 200, 200, 255), wi::gui::WIDGETSTATE::FOCUS);
+	nodeEditorButton.OnClick([this](wi::gui::EventArgs args) {
+		nodeEditorWnd.SetVisible(!nodeEditorWnd.IsVisible());
+	});
+	topmenuWnd.AddWidget(&nodeEditorButton);
+
 
 	cinemaButton.Create(ICON_CINEMA_MODE);
 	cinemaButton.SetLocalizationEnabled(wi::gui::LocalizationEnabled::Tooltip);
@@ -1333,6 +1345,9 @@ void EditorComponent::Load()
 
 	themeEditorWnd.Create(this);
 	GetGUI().AddWidget(&themeEditorWnd);
+
+	nodeEditorWnd.Create(this);
+	GetGUI().AddWidget(&nodeEditorWnd);
 
 	SetDefaultLocalization();
 	generalWnd.RefreshLanguageSelectionAfterWholeGUIWasInitialized();

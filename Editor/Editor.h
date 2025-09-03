@@ -6,6 +6,7 @@
 #include "ContentBrowserWindow.h"
 #include "ProjectCreatorWindow.h"
 #include "ThemeEditorWindow.h"
+#include "NodeEditorWindow.h"
 #include "GraphicsWindow.h"
 #include "CameraWindow.h"
 #include "MaterialPickerWindow.h"
@@ -53,9 +54,10 @@ public:
 	wi::gui::Button saveButton;
 	wi::gui::Button openButton;
 	wi::gui::Button contentBrowserButton;
-	wi::gui::Button logButton;
-	wi::gui::Button profilerButton;
-	wi::gui::Button cinemaButton;
+        wi::gui::Button logButton;
+        wi::gui::Button profilerButton;
+        wi::gui::Button nodeEditorButton;
+        wi::gui::Button cinemaButton;
 	wi::gui::Button fullscreenButton;
 	wi::gui::Button bugButton;
 	wi::gui::Button aboutButton;
@@ -66,9 +68,10 @@ public:
 	ComponentsWindow componentsWnd;
 	ProfilerWindow profilerWnd;
 	ContentBrowserWindow contentBrowserWnd;
-	ProjectCreatorWindow projectCreatorWnd;
-	ThemeEditorWindow themeEditorWnd;
-	wi::gui::Window topmenuWnd;
+        ProjectCreatorWindow projectCreatorWnd;
+        ThemeEditorWindow themeEditorWnd;
+        NodeEditorWindow nodeEditorWnd;
+        wi::gui::Window topmenuWnd;
 
 	wi::gui::Button generalButton;
 	wi::gui::Button graphicsButton;
