@@ -27,16 +27,15 @@ void NodeEditorWindow::Create(EditorComponent* _editor)
 
 void NodeEditorWindow::AddNode(const std::string& name, const XMFLOAT2& position)
 {
-	nodes.emplace_back();
-	Node& node = nodes.back();
-	node.window.Create(name);
-	node.window.SetSize(XMFLOAT2(120, 60));
-	node.window.SetPos(position);
-	node.window.SetMovable(true);
-	node.window.SetVisible(true);
-	node.window.SetColor(wi::Color(60, 60, 60, 200));
+        nodes.emplace_back(std::make_unique<Node>());
+        Node& node = *nodes.back();
+        node.window.Create(name, Window::WindowControls::MOVE | Window::WindowControls::DISABLE_TITLE_BAR);
+        node.window.SetSize(XMFLOAT2(120, 60));
+        node.window.SetPos(position);
+        node.window.SetVisible(true);
+        node.window.SetColor(wi::Color(60, 60, 60, 200));
 
-	AddWidget(&node.window);
+        AddWidget(&node.window);
 
 	if (nodes.size() > 1)
 	{
@@ -63,16 +62,17 @@ void NodeEditorWindow::Render(const wi::Canvas& canvas, wi::graphics::CommandLis
 		if (link.first >= nodes.size() || link.second >= nodes.size())
 			continue;
 
-		const Node& a = nodes[link.first];
-		const Node& b = nodes[link.second];
+                const Node& a = *nodes[link.first];
+                const Node& b = *nodes[link.second];
 
 		wi::renderer::RenderableLine2D line;
-		line.start = XMFLOAT2(a.window.GetPos().x + a.window.GetSize().x * 0.5f,
-							  a.window.GetPos().y + a.window.GetSize().y * 0.5f);
-		line.end = XMFLOAT2(b.window.GetPos().x + b.window.GetSize().x * 0.5f,
-							b.window.GetPos().y + b.window.GetSize().y * 0.5f);
-		line.color = wi::Color::White();
-		wi::renderer::DrawLine(line);
+                line.start = XMFLOAT2(a.window.GetPos().x + a.window.GetSize().x * 0.5f,
+                                                          a.window.GetPos().y + a.window.GetSize().y * 0.5f);
+                line.end = XMFLOAT2(b.window.GetPos().x + b.window.GetSize().x * 0.5f,
+                                                        b.window.GetPos().y + b.window.GetSize().y * 0.5f);
+                line.color_start = wi::Color::White();
+                line.color_end = wi::Color::White();
+                wi::renderer::DrawLine(line);
 	}
 }
 
