@@ -1,10 +1,13 @@
 #include "NodeEditorWindow.h"
 #include "Editor.h"
 #include "stdafx.h"
+#include "wiImage.h"
 #include "wiRenderer.h"
 
 using namespace wi::graphics;
 using namespace wi::gui;
+
+static const float separator = 140.0f;
 
 void NodeEditorWindow::Create(EditorComponent *_editor) {
   editor = _editor;
@@ -19,7 +22,7 @@ void NodeEditorWindow::Create(EditorComponent *_editor) {
   addNodeButton.SetLocalizationEnabled(false);
   addNodeButton.SetSize(XMFLOAT2(100, 20));
   addNodeButton.OnClick([this](wi::gui::EventArgs args) {
-    XMFLOAT2 pos = XMFLOAT2(50 + nodes.size() * 120.0f, 80.0f);
+    XMFLOAT2 pos = XMFLOAT2(separator + 20 + nodes.size() * 120.0f, 80.0f);
     AddNode("Node " + std::to_string(nodes.size()), pos);
   });
   AddWidget(&addNodeButton, wi::gui::Window::AttachmentOptions::NONE);
@@ -86,6 +89,14 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas,
 
   wi::gui::Window::ApplyScissor(canvas, scissorRect, cmd);
 
+  // draw separator similar to Content Browser
+  wi::image::Params params;
+  params.pos =
+      XMFLOAT3(translation.x + separator, translation.y + control_size, 0);
+  params.siz = XMFLOAT2(2, scale.y - control_size);
+  params.color = shadow_color;
+  wi::image::Draw(nullptr, params, cmd);
+
   for (auto &link : links) {
     if (link.first >= nodes.size() || link.second >= nodes.size())
       continue;
@@ -109,10 +120,9 @@ void NodeEditorWindow::ResizeLayout() {
   const float padding = 4;
 
   addNodeButton.Detach();
+  addNodeButton.SetPos(XMFLOAT2(translation.x + padding,
+                                translation.y + control_size + padding));
   addNodeButton.SetSize(
-      XMFLOAT2(GetWidgetAreaSize().x - padding * 2, addNodeButton.GetSize().y));
-  addNodeButton.SetPos(
-      XMFLOAT2(translation.x + padding,
-               translation.y + scale.y - addNodeButton.GetSize().y - padding));
+      XMFLOAT2(separator - padding * 2, addNodeButton.GetSize().y));
   addNodeButton.AttachTo(this);
 }
