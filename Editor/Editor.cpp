@@ -1116,20 +1116,20 @@ void EditorComponent::Load()
 	});
 	topmenuWnd.AddWidget(&profilerButton);
 
-	nodeEditorButton.Create("Node Editor");
-	nodeEditorButton.SetLocalizationEnabled(wi::gui::LocalizationEnabled::Tooltip);
-	nodeEditorButton.SetShadowRadius(2);
-	nodeEditorButton.font.params.shadowColor = wi::Color::Transparent();
-	nodeEditorButton.SetTooltip("Open the node editor");
-	nodeEditorButton.SetColor(wi::Color(50, 160, 200, 180), wi::gui::WIDGETSTATE::IDLE);
-	nodeEditorButton.SetColor(wi::Color(120, 200, 200, 255), wi::gui::WIDGETSTATE::FOCUS);
-	nodeEditorButton.OnClick([this](wi::gui::EventArgs args) {
-		nodeEditorWnd.SetVisible(!nodeEditorWnd.IsVisible());
-	});
-	topmenuWnd.AddWidget(&nodeEditorButton);
+       nodeEditorButton.Create(ICON_SOFT);
+       nodeEditorButton.SetLocalizationEnabled(wi::gui::LocalizationEnabled::Tooltip);
+       nodeEditorButton.SetShadowRadius(2);
+       nodeEditorButton.font.params.shadowColor = wi::Color::Transparent();
+       nodeEditorButton.SetTooltip("Open the node editor");
+       nodeEditorButton.SetColor(wi::Color(50, 160, 200, 180), wi::gui::WIDGETSTATE::IDLE);
+       nodeEditorButton.SetColor(wi::Color(120, 200, 200, 255), wi::gui::WIDGETSTATE::FOCUS);
+       nodeEditorButton.OnClick([this](wi::gui::EventArgs args) {
+               nodeEditorWnd.SetVisible(!nodeEditorWnd.IsVisible());
+       });
+       GetGUI().AddWidget(&nodeEditorButton);
 
 
-	cinemaButton.Create(ICON_CINEMA_MODE);
+       cinemaButton.Create(ICON_CINEMA_MODE);
 	cinemaButton.SetLocalizationEnabled(wi::gui::LocalizationEnabled::Tooltip);
 	cinemaButton.SetShadowRadius(2);
 	cinemaButton.font.params.shadowColor = wi::Color::Transparent();
@@ -5814,13 +5814,18 @@ void EditorComponent::UpdateDynamicWidgets()
 	navtestButton.Update(*this, 0);
 	y += navtestButton.GetSize().y + padding;
 
-	cinemaButton.SetSize(XMFLOAT2(hei, hei));
-	cinemaButton.SetPos(XMFLOAT2(ofs, y));
-	cinemaButton.Update(*this, 0);
-	y += cinemaButton.GetSize().y + padding;
+       cinemaButton.SetSize(XMFLOAT2(hei, hei));
+       cinemaButton.SetPos(XMFLOAT2(ofs, y));
+       cinemaButton.Update(*this, 0);
+       y += cinemaButton.GetSize().y + padding;
+
+        nodeEditorButton.SetSize(XMFLOAT2(hei, hei));
+        nodeEditorButton.SetPos(XMFLOAT2(ofs, y));
+        nodeEditorButton.Update(*this, 0);
+        y += nodeEditorButton.GetSize().y + padding;
 
 
-	newEntityCombo.SetSize(XMFLOAT2(hei * 1.4f, hei * 1.4f));
+       newEntityCombo.SetSize(XMFLOAT2(hei * 1.4f, hei * 1.4f));
 	ofs -= padding * 2 + newEntityCombo.GetSize().x;
 	y = topmenuWnd.GetSize().y + padding;
 	newEntityCombo.SetPos(XMFLOAT2(ofs, y));
