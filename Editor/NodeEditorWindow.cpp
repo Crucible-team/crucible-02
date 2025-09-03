@@ -141,7 +141,11 @@ void NodeEditorWindow::AddNode() {
   node->label.SetSize(XMFLOAT2(112, 20));
   node->window.AddWidget(&node->label);
 
-  node->window.AttachTo(this);
+  // Register the node window as a child widget so it can be rendered,
+  // updated and receive input events (such as moving and interacting
+  // with widgets inside it).
+  AddWidget(&node->window, wi::gui::Window::AttachmentOptions::NONE);
+
   nodes.push_back(std::move(node));
   ResizeLayout();
 }
