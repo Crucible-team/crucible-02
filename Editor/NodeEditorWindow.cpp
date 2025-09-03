@@ -2,6 +2,7 @@
 #include "stdafx.h"
 #include "NodeEditorWindow.h"
 #include "wiImage.h"
+#include "wiRenderer.h"
 // clang-format on
 
 using namespace wi::graphics;
@@ -16,10 +17,15 @@ void NodeEditorWindow::Create(EditorComponent *_editor) {
   wi::gui::Window::Create("Node Editor");
 
   RemoveWidget(&scrollbar_horizontal);
+  RemoveWidget(&scrollbar_vertical);
+  scrollable_area.Detach();
+  scrollable_area.SetEnabled(false);
+  scrollable_area.SetVisible(false);
 
   addNodeButton.Create("Add Node");
   addNodeButton.SetLocalizationEnabled(false);
   addNodeButton.SetSize(XMFLOAT2(120, 25));
+  addNodeButton.OnClick([this](wi::gui::EventArgs) { AddNode(); });
   AddWidget(&addNodeButton, wi::gui::Window::AttachmentOptions::NONE);
 
   SetVisible(false);
@@ -36,6 +42,18 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
     params.siz = XMFLOAT2(2, scale.y - control_size);
     params.color = shadow_color;
     wi::image::Draw(nullptr, params, cmd);
+
+    for (size_t i = 1; i < nodes.size(); ++i) {
+      const auto &a = nodes[i - 1]->window;
+      const auto &b = nodes[i]->window;
+      wi::renderer::RenderableLine2D line;
+      line.start = XMFLOAT2(a.translation.x + a.scale.x * 0.5f,
+                            a.translation.y + a.scale.y * 0.5f);
+      line.end = XMFLOAT2(b.translation.x + b.scale.x * 0.5f,
+                          b.translation.y + b.scale.y * 0.5f);
+      line.color_start = line.color_end = XMFLOAT4(1, 1, 1, 1);
+      wi::renderer::DrawLine(line);
+    }
   }
 }
 
@@ -60,6 +78,17 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     addNodeButton.sprites[i].params.corners_rounding[3].radius = radius;
   }
 
+  for (auto &node : nodes) {
+    node->window.SetShadowRadius(2);
+    for (int i = 0; i < arraysize(wi::gui::Widget::sprites); ++i) {
+      node->window.sprites[i].params.enableCornerRounding();
+      node->window.sprites[i].params.corners_rounding[0].radius = radius;
+      node->window.sprites[i].params.corners_rounding[1].radius = radius;
+      node->window.sprites[i].params.corners_rounding[2].radius = radius;
+      node->window.sprites[i].params.corners_rounding[3].radius = radius;
+    }
+  }
+
   addNodeButton.SetShadowRadius(0);
 }
 
@@ -74,4 +103,23 @@ void NodeEditorWindow::ResizeLayout() {
   addNodeButton.SetSize(
       XMFLOAT2(separator - padding * 2, addNodeButton.GetSize().y));
   addNodeButton.AttachTo(this);
+}
+
+void NodeEditorWindow::AddNode() {
+  auto node = std::make_unique<Node>();
+  node->window.Create("");
+  node->window.SetControls(wi::gui::WindowControls::MOVE |
+                           wi::gui::WindowControls::DISABLE_TITLE_BAR);
+  node->window.SetSize(XMFLOAT2(120, 60));
+
+  XMFLOAT2 pos(translation.x + separator + 20,
+               translation.y + control_size + 20);
+  if (!nodes.empty()) {
+    const auto &prev = nodes.back()->window;
+    pos.x = prev.translation.x + 40.0f;
+    pos.y = prev.translation.y + prev.scale.y + 20.0f;
+  }
+  node->window.SetPos(pos);
+  node->window.AttachTo(this);
+  nodes.push_back(std::move(node));
 }
