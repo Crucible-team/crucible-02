@@ -2,7 +2,6 @@
 #include "stdafx.h"
 #include "NodeEditorWindow.h"
 #include "wiImage.h"
-#include "wiRenderer.h"
 // clang-format on
 
 using namespace wi::graphics;
@@ -46,13 +45,22 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
     for (size_t i = 1; i < nodes.size(); ++i) {
       const auto &a = nodes[i - 1]->window;
       const auto &b = nodes[i]->window;
-      wi::renderer::RenderableLine2D line;
-      line.start = XMFLOAT2(a.translation.x + a.scale.x * 0.5f,
-                            a.translation.y + a.scale.y * 0.5f);
-      line.end = XMFLOAT2(b.translation.x + b.scale.x * 0.5f,
-                          b.translation.y + b.scale.y * 0.5f);
-      line.color_start = line.color_end = XMFLOAT4(1, 1, 1, 1);
-      wi::renderer::DrawLine(line);
+      XMFLOAT2 a_center(a.translation.x + a.scale.x * 0.5f,
+                        a.translation.y + a.scale.y * 0.5f);
+      XMFLOAT2 b_center(b.translation.x + b.scale.x * 0.5f,
+                        b.translation.y + b.scale.y * 0.5f);
+      float length = wi::math::Distance(a_center, b_center);
+      float angle =
+          std::atan2(b_center.y - a_center.y, b_center.x - a_center.x);
+      XMFLOAT2 mid((a_center.x + b_center.x) * 0.5f,
+                   (a_center.y + b_center.y) * 0.5f);
+      wi::image::Params lineParams;
+      lineParams.pos = XMFLOAT3(mid.x, mid.y, 0);
+      lineParams.siz = XMFLOAT2(length, 2);
+      lineParams.pivot = XMFLOAT2(0.5f, 0.5f);
+      lineParams.rotation = angle;
+      lineParams.color = XMFLOAT4(1, 1, 1, 1);
+      wi::image::Draw(nullptr, lineParams, cmd);
     }
   }
 }
