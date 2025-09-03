@@ -2,10 +2,22 @@
 #include "stdafx.h"
 #include "NodeEditorWindow.h"
 #include "wiImage.h"
+#include <unordered_set>
+#include <unordered_map>
 // clang-format on
 
 using namespace wi::graphics;
 using namespace wi::gui;
+
+// Helper: read text from TextInputField, prefer current typing if any
+static std::string GetFieldText(const wi::gui::TextInputField& f)
+{
+    // TextInputField getters are non-const, so cast away constness for read-only access
+    wi::gui::TextInputField& nc = const_cast<wi::gui::TextInputField&>(f);
+    std::string s = nc.GetCurrentInputValue();
+    if (s.empty()) s = nc.GetValue();
+    return s;
+}
 
 static const float separator = 140.0f;
 
@@ -110,9 +122,10 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
       }
     }
 
-    // Draw connection wires based on connection rows
+    // Draw connection wires based on connection rows (deduplicated by key)
     for (const auto& n : nodes) {
       const auto& wnd = n->window;
+      std::unordered_set<std::string> seen_keys;
       for (const auto& crow_uptr : n->connectionRows) {
         const auto* crow = crow_uptr.get();
         // find source output header row by name
@@ -127,11 +140,24 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
         const float sy = src_orow->label.translation.y + src_orow->label.scale.y * 0.5f;
 
         // Determine target nodes by target field (can be multiple)
-        std::string target_text = crow->target.GetText();
+        std::string target_text = GetFieldText(crow->target);
         if (target_text == "!self" || target_text.empty()) {
           // self target: don't draw a wire, it's indicated by row highlight
           continue;
         }
+
+        // Deduplication key: outputName + target + input + param + delay
+        std::string key;
+        key.reserve(crow->outputName.size() + target_text.size() + 64);
+        key.append(crow->outputName).push_back('\n');
+        key.append(target_text).push_back('\n');
+        key.append(GetFieldText(crow->input)).push_back('\n');
+        key.append(GetFieldText(crow->param)).push_back('\n');
+        key.append(GetFieldText(crow->delay));
+        if (seen_keys.find(key) != seen_keys.end()) {
+          continue; // skip duplicates
+        }
+        seen_keys.insert(key);
 
         wi::vector<const Node*> targets;
         for (const auto& other : nodes) {
@@ -145,7 +171,7 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
         }
 
         // Determine target input label by input field
-        const std::string input_name = crow->input.GetText();
+        const std::string input_name = GetFieldText(crow->input);
         for (const Node* target_node : targets) {
           const wi::gui::Label* target_input_label = nullptr;
           if (!input_name.empty())
@@ -311,13 +337,31 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     // Drop
     if (drag.active && ((drag.rightButton && !wi::input::Down(wi::input::MOUSE_BUTTON_RIGHT)) || (!drag.rightButton && !wi::input::Down(wi::input::MOUSE_BUTTON_LEFT)))) {
       if (drag.hoverNode && drag.hoverInput && drag.srcNode && drag.srcOutput) {
-        // Create a connection row under the dragged output
-        auto* crow = drag.srcNode->AddConnectionRow(this, drag.srcOutput->name);
-        if (crow) {
-          // Fill target with target node's name, and input with hovered input label text
-          crow->target.SetValue(drag.hoverNode->name);
-          crow->input.SetValue(drag.hoverInput->GetText());
-          drag.srcNode->LayoutRows();
+        // Check for existing identical connection (output, target, input, param, delay)
+        const std::string newTarget = drag.hoverNode->name;
+        const std::string newInput = drag.hoverInput->GetText();
+        const std::string newParam = "";
+        const std::string newDelay = "0.0";
+        bool exists = false;
+        for (auto& cr : drag.srcNode->connectionRows) {
+          if (cr->outputName != drag.srcOutput->name) continue;
+          if (GetFieldText(cr->target) != newTarget) continue;
+          if (GetFieldText(cr->input) != newInput) continue;
+          if (GetFieldText(cr->param) != newParam) continue;
+          if (GetFieldText(cr->delay) != newDelay) continue;
+          exists = true; selectedConnection = cr.get(); break;
+        }
+        if (!exists) {
+          // Create a connection row under the dragged output
+          auto* crow = drag.srcNode->AddConnectionRow(this, drag.srcOutput->name);
+          if (crow) {
+            crow->target.SetValue(newTarget);
+            crow->input.SetValue(newInput);
+            crow->param.SetValue(newParam);
+            crow->delay.SetValue(newDelay);
+            selectedConnection = crow;
+            drag.srcNode->LayoutRows();
+          }
         }
       }
       drag = DragState{}; // reset
@@ -534,6 +578,40 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
         XMFLOAT2 local = XMFLOAT2(p2.x - scrollable_area.translation.x, p2.y - scrollable_area.translation.y);
         uint32_t hid = CreateHub(local);
         selectedConnection->anchorHubIds.push_back(hid);
+      }
+    }
+  }
+
+  // Unify duplicate connections: ensure only one representative per (output,target,input,param,delay)
+  // and redirect selection to representative. Also unify anchors to representative hubs.
+  for (auto& n : nodes) {
+    std::unordered_map<std::string, Node::ConnectionUI*> rep;
+    for (auto& cr_uptr : n->connectionRows) {
+      auto* cr = cr_uptr.get();
+      const std::string key = cr->outputName + "\n" + GetFieldText(cr->target) + "\n" + GetFieldText(cr->input) + "\n" + GetFieldText(cr->param) + "\n" + GetFieldText(cr->delay);
+      auto it = rep.find(key);
+      if (it == rep.end()) {
+        rep.emplace(key, cr);
+      } else {
+        Node::ConnectionUI* master = it->second;
+        if (selectedConnection == cr) selectedConnection = master;
+        // unify hubs: bind duplicate to master's hub chain
+        if (cr->anchorHubIds != master->anchorHubIds) {
+          // release old hubs if unreferenced
+          auto old = cr->anchorHubIds;
+          cr->anchorHubIds = master->anchorHubIds;
+          for (auto hid : old) {
+            bool stillUsed = false;
+            // check other connections
+            for (auto& cr2_uptr : n->connectionRows) {
+              auto* cr2 = cr2_uptr.get();
+              if (cr2 == cr) continue;
+              for (auto id2 : cr2->anchorHubIds) { if (id2 == hid) { stillUsed = true; break; } }
+              if (stillUsed) break;
+            }
+            if (!stillUsed) DeleteHubIfUnreferenced(hid);
+          }
+        }
       }
     }
   }
