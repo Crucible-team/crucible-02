@@ -17,6 +17,11 @@ void NodeEditorWindow::Create(EditorComponent *_editor) {
 
   RemoveWidget(&scrollbar_horizontal);
 
+  addNodeButton.Create("Add Node");
+  addNodeButton.SetLocalizationEnabled(false);
+  addNodeButton.SetSize(XMFLOAT2(120, 25));
+  AddWidget(&addNodeButton, wi::gui::Window::AttachmentOptions::NONE);
+
   SetVisible(false);
 }
 
@@ -47,7 +52,26 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     sprites[i].params.corners_rounding[1].radius = radius;
     sprites[i].params.corners_rounding[2].radius = radius;
     sprites[i].params.corners_rounding[3].radius = radius;
+
+    addNodeButton.sprites[i].params.enableCornerRounding();
+    addNodeButton.sprites[i].params.corners_rounding[0].radius = radius;
+    addNodeButton.sprites[i].params.corners_rounding[1].radius = radius;
+    addNodeButton.sprites[i].params.corners_rounding[2].radius = radius;
+    addNodeButton.sprites[i].params.corners_rounding[3].radius = radius;
   }
+
+  addNodeButton.SetShadowRadius(0);
 }
 
-void NodeEditorWindow::ResizeLayout() { wi::gui::Window::ResizeLayout(); }
+void NodeEditorWindow::ResizeLayout() {
+  wi::gui::Window::ResizeLayout();
+  const float padding = 4;
+
+  addNodeButton.Detach();
+  addNodeButton.SetPos(
+      XMFLOAT2(translation.x + padding,
+               translation.y + scale.y - addNodeButton.GetSize().y - padding));
+  addNodeButton.SetSize(
+      XMFLOAT2(separator - padding * 2, addNodeButton.GetSize().y));
+  addNodeButton.AttachTo(this);
+}

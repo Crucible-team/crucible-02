@@ -9,6 +9,8 @@ public:
 
   EditorComponent *editor = nullptr;
 
+  wi::gui::Button addNodeButton;
+
   void Update(const wi::Canvas &canvas, float dt) override;
   void Render(const wi::Canvas &canvas,
               wi::graphics::CommandList cmd) const override;
