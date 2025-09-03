@@ -111,23 +111,37 @@ void NodeEditorWindow::ResizeLayout() {
   addNodeButton.SetSize(
       XMFLOAT2(separator - padding * 2, addNodeButton.GetSize().y));
   addNodeButton.AttachTo(this);
+
+  const float width = GetWidgetAreaSize().x;
+  float y = translation.y + control_size + padding + 10;
+  const float sep = translation.x + separator + 10;
+  float hoffset = sep;
+  for (auto &node : nodes) {
+    node->window.Detach();
+    node->window.SetPos(XMFLOAT2(hoffset, y));
+    hoffset += node->window.GetSize().x + 15;
+    if (hoffset + node->window.GetSize().x >= translation.x + width) {
+      hoffset = sep;
+      y += node->window.GetSize().y + 40;
+    }
+    node->window.AttachTo(this);
+  }
 }
 
 void NodeEditorWindow::AddNode() {
-  auto node = std::make_unique<Node>();
-  node->window.Create("");
-  node->window.SetControls(wi::gui::WindowControls::MOVE |
-                           wi::gui::WindowControls::DISABLE_TITLE_BAR);
+  std::string name = "Node " + std::to_string(nodes.size() + 1);
+  auto node = std::make_unique<Node>(name);
+  node->window.Create("", Window::WindowControls::MOVE |
+                              Window::WindowControls::DISABLE_TITLE_BAR);
   node->window.SetSize(XMFLOAT2(120, 60));
 
-  XMFLOAT2 pos(translation.x + separator + 20,
-               translation.y + control_size + 20);
-  if (!nodes.empty()) {
-    const auto &prev = nodes.back()->window;
-    pos.x = prev.translation.x + 40.0f;
-    pos.y = prev.translation.y + prev.scale.y + 20.0f;
-  }
-  node->window.SetPos(pos);
+  node->label.Create(name);
+  node->label.SetText(name);
+  node->label.SetPos(XMFLOAT2(4, 4));
+  node->label.SetSize(XMFLOAT2(112, 20));
+  node->window.AddWidget(&node->label);
+
   node->window.AttachTo(this);
   nodes.push_back(std::move(node));
+  ResizeLayout();
 }

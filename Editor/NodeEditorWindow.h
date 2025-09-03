@@ -9,7 +9,9 @@ public:
 
   struct Node {
     wi::gui::Window window;
-    Node() = default;
+    wi::gui::Label label;
+    std::string name;
+    Node(const std::string &name) : name(name) {}
     Node(const Node &) = delete;
     Node &operator=(const Node &) = delete;
   };
