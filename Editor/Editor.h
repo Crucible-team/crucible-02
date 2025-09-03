@@ -54,10 +54,10 @@ public:
 	wi::gui::Button saveButton;
 	wi::gui::Button openButton;
 	wi::gui::Button contentBrowserButton;
-        wi::gui::Button logButton;
-        wi::gui::Button profilerButton;
-        wi::gui::Button nodeEditorButton;
-        wi::gui::Button cinemaButton;
+    wi::gui::Button logButton;
+    wi::gui::Button profilerButton;
+    wi::gui::Button nodeEditorButton;
+    wi::gui::Button cinemaButton;
 	wi::gui::Button fullscreenButton;
 	wi::gui::Button bugButton;
 	wi::gui::Button aboutButton;
@@ -68,10 +68,10 @@ public:
 	ComponentsWindow componentsWnd;
 	ProfilerWindow profilerWnd;
 	ContentBrowserWindow contentBrowserWnd;
-        ProjectCreatorWindow projectCreatorWnd;
-        ThemeEditorWindow themeEditorWnd;
-        NodeEditorWindow nodeEditorWnd;
-        wi::gui::Window topmenuWnd;
+    ProjectCreatorWindow projectCreatorWnd;
+    ThemeEditorWindow themeEditorWnd;
+    NodeEditorWindow nodeEditorWnd;
+    wi::gui::Window topmenuWnd;
 
 	wi::gui::Button generalButton;
 	wi::gui::Button graphicsButton;

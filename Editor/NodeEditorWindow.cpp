@@ -117,19 +117,21 @@ void NodeEditorWindow::ResizeLayout() {
   const float sep = translation.x + separator + 10;
   float hoffset = sep;
   for (auto &node : nodes) {
+    node->window.Detach();
     node->window.SetPos(XMFLOAT2(hoffset, y));
     hoffset += node->window.GetSize().x + 15;
     if (hoffset + node->window.GetSize().x >= translation.x + width) {
       hoffset = sep;
       y += node->window.GetSize().y + 40;
     }
+    node->window.AttachTo(this);
   }
 }
 
 void NodeEditorWindow::AddNode() {
   std::string name = "Node " + std::to_string(nodes.size() + 1);
   auto node = std::make_unique<Node>(name);
-  node->window.Create("", Window::WindowControls::MOVE |
+  node->window.Create(name, Window::WindowControls::MOVE |
                               Window::WindowControls::DISABLE_TITLE_BAR);
   node->window.SetSize(XMFLOAT2(120, 60));
 
@@ -139,7 +141,7 @@ void NodeEditorWindow::AddNode() {
   node->label.SetSize(XMFLOAT2(112, 20));
   node->window.AddWidget(&node->label);
 
-  AddWidget(&node->window, wi::gui::Window::AttachmentOptions::NONE);
+  node->window.AttachTo(this);
   nodes.push_back(std::move(node));
   ResizeLayout();
 }
