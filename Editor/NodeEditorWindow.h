@@ -28,6 +28,7 @@ public:
       wi::gui::TextInputField param;   // optional param
       wi::gui::TextInputField delay;   // seconds
       wi::gui::Button removeButton;
+      wi::vector<uint32_t> anchorHubIds;    // reroute anchors referencing shared hubs
     };
     wi::vector<std::unique_ptr<OutputUI>> outputRows;
     wi::vector<std::unique_ptr<ConnectionUI>> connectionRows;
@@ -35,9 +36,13 @@ public:
     wi::gui::Label bottomSpacer; // pushes window bottom to add padding
 
     void AddOutputRow(NodeEditorWindow* owner, const std::string& outputName);
-    void AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName);
+    ConnectionUI* AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName);
     void RemoveConnectionRow(NodeEditorWindow* owner, ConnectionUI* row);
     void LayoutRows();
+    OutputUI* FindOutputRow(const std::string& outputName) {
+      for (auto& r : outputRows) if (r->name == outputName) return r.get();
+      return nullptr;
+    }
 
     Node(const std::string &name) : name(name) {}
     Node(const Node &) = delete;
@@ -60,4 +65,45 @@ private:
   void RemoveNode(Node* node);
   wi::vector<Node*> pendingRemoval;
   Node* lastAddedNode = nullptr; // track the last created node for centering
+
+  // Drag & drop state for creating connections by dragging from output pins to input pins
+  struct DragState {
+    bool active = false;
+    bool rightButton = false;
+    bool fromAnchor = false;
+    Node* srcNode = nullptr;
+    Node::OutputUI* srcOutput = nullptr;
+    XMFLOAT2 srcPos = XMFLOAT2(0, 0);
+    XMFLOAT2 cursor = XMFLOAT2(0, 0);
+    Node* hoverNode = nullptr;
+    const wi::gui::Label* hoverInput = nullptr;
+  } drag;
+
+  // Wire selection + anchor dragging
+  Node::ConnectionUI* selectedConnection = nullptr;
+  struct AnchorDrag {
+    bool active = false;
+    Node::ConnectionUI* conn = nullptr;
+    int index = -1;
+  } anchorDrag;
+  struct AnchorRightOp {
+    bool active = false;
+    bool moved = false;
+    Node* node = nullptr;
+    Node::ConnectionUI* conn = nullptr;
+    int index = -1;
+    XMFLOAT2 start = XMFLOAT2(0,0);
+  } anchorRight;
+
+  // Shared reroute hubs (content-local positions)
+  struct RerouteHub {
+    uint32_t id = 0;
+    XMFLOAT2 pos = XMFLOAT2(0,0);
+  };
+  wi::vector<RerouteHub> hubs;
+  uint32_t nextHubId = 1;
+  RerouteHub* GetHub(uint32_t id);
+  const RerouteHub* GetHub(uint32_t id) const;
+  uint32_t CreateHub(const XMFLOAT2& local);
+  void DeleteHubIfUnreferenced(uint32_t id);
 };

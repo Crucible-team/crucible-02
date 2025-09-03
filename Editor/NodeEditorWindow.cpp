@@ -52,14 +52,23 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
       for (auto& il : n->inputLabels) {
         float cx = wnd.translation.x + 6.0f; // near left edge
         float cy = il->translation.y + il->scale.y * 0.5f;
+        bool isHover = drag.active && drag.hoverNode == n.get() && drag.hoverInput == il.get();
         wi::image::Params pin;
         pin.pos = XMFLOAT3(cx, cy, 0);
-        pin.siz = XMFLOAT2(pinR * 2, pinR * 2);
+        float r = isHover ? pinR + 2.0f : pinR;
+        pin.siz = XMFLOAT2(r * 2, r * 2);
         pin.pivot = XMFLOAT2(0.5f, 0.5f);
-        pin.color = XMFLOAT4(0.7f, 0.9f, 1.0f, 1);
+        pin.color = isHover ? XMFLOAT4(0.4f, 1.0f, 0.6f, 1) : XMFLOAT4(0.7f, 0.9f, 1.0f, 1);
         pin.enableCornerRounding();
-        for (int i = 0; i < arraysize(pin.corners_rounding); ++i) pin.corners_rounding[i].radius = pinR;
+        for (int i = 0; i < arraysize(pin.corners_rounding); ++i) pin.corners_rounding[i].radius = r;
         wi::image::Draw(nullptr, pin, cmd);
+        if (isHover) {
+          // subtle outer ring to indicate snap target
+          wi::image::Params ring = pin;
+          ring.siz = XMFLOAT2((r + 4.0f) * 2, (r + 4.0f) * 2);
+          ring.color = XMFLOAT4(0.4f, 1.0f, 0.6f, 0.25f);
+          wi::image::Draw(nullptr, ring, cmd);
+        }
       }
       // Outputs on right: one pin per output header row, with self-target highlight
       for (auto& orow : n->outputRows) {
@@ -82,14 +91,22 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
 
         float cx = wnd.translation.x + wnd.scale.x - 6.0f;
         float cy = orow->label.translation.y + orow->label.scale.y * 0.5f;
+        bool isSrc = drag.active && drag.srcNode == n.get() && drag.srcOutput == orow.get();
         wi::image::Params pin;
         pin.pos = XMFLOAT3(cx, cy, 0);
-        pin.siz = XMFLOAT2(pinR * 2, pinR * 2);
+        float r = isSrc ? pinR + 2.0f : pinR;
+        pin.siz = XMFLOAT2(r * 2, r * 2);
         pin.pivot = XMFLOAT2(0.5f, 0.5f);
-        pin.color = XMFLOAT4(1.0f, 0.8f, 0.3f, 1);
+        pin.color = isSrc ? XMFLOAT4(1.0f, 0.95f, 0.5f, 1) : XMFLOAT4(1.0f, 0.8f, 0.3f, 1);
         pin.enableCornerRounding();
-        for (int i = 0; i < arraysize(pin.corners_rounding); ++i) pin.corners_rounding[i].radius = pinR;
+        for (int i = 0; i < arraysize(pin.corners_rounding); ++i) pin.corners_rounding[i].radius = r;
         wi::image::Draw(nullptr, pin, cmd);
+        if (isSrc) {
+          wi::image::Params ring = pin;
+          ring.siz = XMFLOAT2((r + 4.0f) * 2, (r + 4.0f) * 2);
+          ring.color = XMFLOAT4(1.0f, 0.95f, 0.5f, 0.25f);
+          wi::image::Draw(nullptr, ring, cmd);
+        }
       }
     }
 
@@ -152,13 +169,54 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
             ey = target_node->window.translation.y + target_node->window.scale.y * 0.5f;
           }
 
-          wi::gui::DrawWireBezierStrip(
-            XMFLOAT2(sx, sy), XMFLOAT2(ex, ey),
-            2.0f,
-            XMFLOAT4(0.6f, 1.0f, 0.6f, 1),
-            canvas, cmd);
+          // Draw piecewise segments through anchors (if any)
+          XMFLOAT4 col = (selectedConnection == crow) ? XMFLOAT4(1.0f, 0.9f, 0.6f, 1) : XMFLOAT4(0.6f, 1.0f, 0.6f, 1);
+          XMFLOAT2 astart(sx, sy);
+          if (!crow->anchorHubIds.empty()) {
+            for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
+              const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
+              XMFLOAT2 ap(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
+              wi::gui::DrawWireBezierStrip(astart, ap, 2.0f, col, canvas, cmd);
+              astart = ap;
+            }
+          }
+          wi::gui::DrawWireBezierStrip(astart, XMFLOAT2(ex, ey), 2.0f, col, canvas, cmd);
+
+          // Draw anchors if selected
+          if (selectedConnection == crow) {
+            for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
+              const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
+              XMFLOAT2 ap(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
+              wi::image::Params a;
+              a.pos = XMFLOAT3(ap.x, ap.y, 0);
+              a.siz = XMFLOAT2(10, 10);
+              a.pivot = XMFLOAT2(0.5f, 0.5f);
+              a.color = XMFLOAT4(1, 1, 1, 0.9f);
+              a.enableCornerRounding();
+              for (int k = 0; k < arraysize(a.corners_rounding); ++k) a.corners_rounding[k].radius = 5;
+              wi::image::Draw(nullptr, a, cmd);
+            }
+          }
         }
       }
+    }
+
+    // Draw preview wire while dragging
+    if (drag.active && drag.srcNode && drag.srcOutput) {
+      float sx = drag.srcPos.x;
+      float sy = drag.srcPos.y;
+      float ex = drag.cursor.x;
+      float ey = drag.cursor.y;
+      // snap preview end to hovered input pin if any
+      if (drag.hoverNode && drag.hoverInput) {
+        ex = drag.hoverNode->window.translation.x + 6.0f;
+        ey = drag.hoverInput->translation.y + drag.hoverInput->scale.y * 0.5f;
+      }
+      wi::gui::DrawWireBezierStrip(
+        XMFLOAT2(sx, sy), XMFLOAT2(ex, ey),
+        2.0f,
+        XMFLOAT4(0.8f, 0.9f, 1.0f, 0.9f),
+        canvas, cmd);
     }
   }
 }
@@ -196,6 +254,289 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
   }
 
   addNodeButton.SetShadowRadius(0);
+
+  // Drag & drop from output pin to input pin:
+  {
+    XMFLOAT4 pointer = wi::input::GetPointer();
+    XMFLOAT2 p = XMFLOAT2(pointer.x, pointer.y);
+    const float pinDetectR = 8.0f;
+
+    // Begin drag if pressed on an output pin
+    if (!drag.active && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT)) {
+      for (auto& n : nodes) {
+        const float cx_base = n->window.translation.x + n->window.scale.x - 6.0f;
+        for (auto& orow : n->outputRows) {
+          float cy = orow->label.translation.y + orow->label.scale.y * 0.5f;
+          float dx = p.x - cx_base;
+          float dy = p.y - cy;
+          if (dx * dx + dy * dy <= pinDetectR * pinDetectR) {
+            drag.active = true;
+            drag.rightButton = false;
+            drag.srcNode = n.get();
+            drag.srcOutput = orow.get();
+            drag.srcPos = XMFLOAT2(cx_base, cy);
+            drag.cursor = p;
+            drag.hoverNode = nullptr;
+            drag.hoverInput = nullptr;
+            break;
+          }
+        }
+        if (drag.active) break;
+      }
+    }
+
+    // Update drag
+    if (drag.active) {
+      drag.cursor = p;
+      // find closest input pin under cursor
+      drag.hoverNode = nullptr;
+      drag.hoverInput = nullptr;
+      float bestDist2 = pinDetectR * pinDetectR;
+      for (auto& n : nodes) {
+        float ix = n->window.translation.x + 6.0f;
+        for (auto& il : n->inputLabels) {
+          float iy = il->translation.y + il->scale.y * 0.5f;
+          float dx = p.x - ix;
+          float dy = p.y - iy;
+          float d2 = dx * dx + dy * dy;
+          if (d2 <= bestDist2) {
+            bestDist2 = d2;
+            drag.hoverNode = n.get();
+            drag.hoverInput = il.get();
+          }
+        }
+      }
+    }
+
+    // Drop
+    if (drag.active && ((drag.rightButton && !wi::input::Down(wi::input::MOUSE_BUTTON_RIGHT)) || (!drag.rightButton && !wi::input::Down(wi::input::MOUSE_BUTTON_LEFT)))) {
+      if (drag.hoverNode && drag.hoverInput && drag.srcNode && drag.srcOutput) {
+        // Create a connection row under the dragged output
+        auto* crow = drag.srcNode->AddConnectionRow(this, drag.srcOutput->name);
+        if (crow) {
+          // Fill target with target node's name, and input with hovered input label text
+          crow->target.SetValue(drag.hoverNode->name);
+          crow->input.SetValue(drag.hoverInput->GetText());
+          drag.srcNode->LayoutRows();
+        }
+      }
+      drag = DragState{}; // reset
+    }
+  }
+
+  // Wire selection and reroute anchors:
+  {
+    if (!drag.active) {
+      XMFLOAT4 pointer = wi::input::GetPointer();
+      XMFLOAT2 p = XMFLOAT2(pointer.x, pointer.y);
+
+      // Anchor drag begin (left-click) and anchor right operations (right-click)
+      if (!anchorDrag.active && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT)) {
+        for (auto& n : nodes) {
+          for (auto& crow_uptr : n->connectionRows) {
+            auto* crow = crow_uptr.get();
+            for (int i = 0; i < (int)crow->anchorHubIds.size(); ++i) {
+              const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
+              XMFLOAT2 ap(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y);
+              float dx = p.x - ap.x;
+              float dy = p.y - ap.y;
+              if (dx * dx + dy * dy <= 8.0f * 8.0f) {
+                selectedConnection = crow;
+                anchorDrag.active = true;
+                anchorDrag.conn = crow;
+                anchorDrag.index = i;
+                break;
+              }
+            }
+            if (anchorDrag.active) break;
+          }
+          if (anchorDrag.active) break;
+        }
+      }
+
+      if (!anchorRight.active && wi::input::Press(wi::input::MOUSE_BUTTON_RIGHT)) {
+        // detect right press over anchor to start right op (drag to connect, click to delete)
+        for (auto& n : nodes) {
+          for (auto& crow_uptr : n->connectionRows) {
+            auto* crow = crow_uptr.get();
+            for (int i = 0; i < (int)crow->anchorHubIds.size(); ++i) {
+              const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
+              XMFLOAT2 ap(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y);
+              float dx = p.x - ap.x;
+              float dy = p.y - ap.y;
+              if (dx * dx + dy * dy <= 8.0f * 8.0f) {
+                selectedConnection = crow;
+                anchorRight.active = true;
+                anchorRight.moved = false;
+                anchorRight.conn = crow;
+                anchorRight.node = nullptr;
+                // find owning node pointer 'n' for this crow
+                anchorRight.node = nullptr;
+                for (auto& n2 : nodes) {
+                  for (auto& cr2 : n2->connectionRows) if (cr2.get() == crow) { anchorRight.node = n2.get(); break; }
+                  if (anchorRight.node) break;
+                }
+                anchorRight.index = i;
+                anchorRight.start = p;
+                break;
+              }
+            }
+            if (anchorRight.active) break;
+          }
+          if (anchorRight.active) break;
+        }
+      }
+
+      // Anchor drag update
+      if (anchorDrag.active) {
+        XMFLOAT2 local = XMFLOAT2(p.x - scrollable_area.translation.x, p.y - scrollable_area.translation.y);
+        if (anchorDrag.conn && anchorDrag.index >= 0 && anchorDrag.index < (int)anchorDrag.conn->anchorHubIds.size()) {
+          auto* hub = GetHub(anchorDrag.conn->anchorHubIds[anchorDrag.index]);
+          if (hub) hub->pos = local;
+        }
+        if (!wi::input::Down(wi::input::MOUSE_BUTTON_LEFT)) {
+          // Left release: attempt merge with other anchors of same node+output
+          if (anchorDrag.conn) {
+            const std::string outname = anchorDrag.conn->outputName;
+            auto* myhub = GetHub(anchorDrag.conn->anchorHubIds[anchorDrag.index]);
+            XMFLOAT2 my = myhub ? myhub->pos : XMFLOAT2(0,0);
+            Node* owner = nullptr;
+            for (auto& n : nodes) {
+              for (auto& cr : n->connectionRows) if (cr.get() == anchorDrag.conn) { owner = n.get(); break; }
+              if (owner) break;
+            }
+            if (owner) {
+              const float mergeThr2 = 10.0f * 10.0f;
+              bool merged = false;
+              for (auto& cr2_uptr : owner->connectionRows) {
+                auto* cr2 = cr2_uptr.get();
+                if (cr2 == anchorDrag.conn) continue;
+                if (cr2->outputName != outname) continue;
+                for (size_t j = 0; j < cr2->anchorHubIds.size(); ++j) {
+                  auto* otherhub = GetHub(cr2->anchorHubIds[j]); if (!otherhub) continue;
+                  XMFLOAT2 other = otherhub->pos;
+                  float dx = my.x - other.x; float dy = my.y - other.y;
+                  if (dx * dx + dy * dy <= mergeThr2) {
+                    // rebind to shared hub id
+                    uint32_t old = anchorDrag.conn->anchorHubIds[anchorDrag.index];
+                    anchorDrag.conn->anchorHubIds[anchorDrag.index] = cr2->anchorHubIds[j];
+                    DeleteHubIfUnreferenced(old);
+                    merged = true; break;
+                  }
+                }
+                if (merged) break;
+              }
+            }
+          }
+          anchorDrag = {};
+        }
+      }
+
+      // Right op update: drag to connect or click to delete
+      if (anchorRight.active) {
+        if (wi::input::Down(wi::input::MOUSE_BUTTON_RIGHT)) {
+          XMFLOAT2 dp = XMFLOAT2(p.x - anchorRight.start.x, p.y - anchorRight.start.y);
+          float d2 = dp.x * dp.x + dp.y * dp.y;
+          if (!anchorRight.moved && d2 > 9.0f) {
+            // begin connection drag from anchor
+            if (anchorRight.node && anchorRight.conn) {
+              drag.active = true;
+              drag.fromAnchor = true;
+              drag.rightButton = true;
+              drag.srcNode = anchorRight.node;
+              drag.srcOutput = anchorRight.node->FindOutputRow(anchorRight.conn->outputName);
+              auto* hub = GetHub(anchorRight.conn->anchorHubIds[anchorRight.index]);
+              XMFLOAT2 ap = hub ? XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y) : p;
+              drag.srcPos = ap;
+              drag.cursor = p;
+              anchorRight.moved = true;
+            }
+          }
+        } else {
+          // right released
+          if (!anchorRight.moved && anchorRight.conn && anchorRight.index >= 0 && anchorRight.index < (int)anchorRight.conn->anchorHubIds.size()) {
+            // treat as delete anchor
+            uint32_t hid = anchorRight.conn->anchorHubIds[anchorRight.index];
+            anchorRight.conn->anchorHubIds.erase(anchorRight.conn->anchorHubIds.begin() + anchorRight.index);
+            DeleteHubIfUnreferenced(hid);
+          }
+          anchorRight = {};
+        }
+      }
+
+      // Wire selection or anchor add
+      if (!anchorDrag.active && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT)) {
+        // Hit-test wires by sampling piecewise segments: source->anchors->target
+        Node::ConnectionUI* hit = nullptr;
+        const float threshold = 6.0f; // px
+        const float thr2 = threshold * threshold;
+        for (auto& n : nodes) {
+          const auto& wnd = n->window;
+          for (auto& crow_uptr : n->connectionRows) {
+            auto* crow = crow_uptr.get();
+            // Determine targets
+            std::string target_text = crow->target.GetText();
+            if (target_text == "!self" || target_text.empty()) continue;
+            wi::vector<const Node*> targets;
+            for (const auto& other : nodes) {
+              if (other.get() == n.get()) continue;
+              if (other->name == target_text || other->label.GetText() == target_text) targets.push_back(other.get());
+            }
+            if (targets.empty()) continue;
+
+            // Source pos
+            const Node::OutputUI* src_orow = nullptr;
+            for (const auto& orow_uptr : n->outputRows) if (orow_uptr->name == crow->outputName) { src_orow = orow_uptr.get(); break; }
+            if (!src_orow) continue;
+            XMFLOAT2 astart(wnd.translation.x + wnd.scale.x - 6.0f, src_orow->label.translation.y + src_orow->label.scale.y * 0.5f);
+
+            auto testSegment = [&](const XMFLOAT2& A, const XMFLOAT2& B) {
+              // simple distance to line segment squared
+              XMFLOAT2 AB(B.x - A.x, B.y - A.y);
+              float ab2 = AB.x * AB.x + AB.y * AB.y;
+              float t = 0;
+              if (ab2 > 0) t = std::max(0.f, std::min(1.f, ((p.x - A.x) * AB.x + (p.y - A.y) * AB.y) / ab2));
+              XMFLOAT2 H(A.x + AB.x * t, A.y + AB.y * t);
+              float dx = p.x - H.x; float dy = p.y - H.y; return dx * dx + dy * dy;
+            };
+
+            // through anchors (shared hubs)
+            if (!crow->anchorHubIds.empty()) {
+              for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
+                auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
+                XMFLOAT2 ap(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y);
+                if (testSegment(astart, ap) <= thr2) { hit = crow; break; }
+                astart = ap;
+              }
+            }
+            if (hit) { selectedConnection = hit; break; }
+            // to each target (test last segment to target input)
+            const std::string input_name = crow->input.GetText();
+            for (const Node* target_node : targets) {
+              const wi::gui::Label* target_input_label = nullptr;
+              if (!input_name.empty()) {
+                for (const auto& ilbl_uptr : target_node->inputLabels) if (ilbl_uptr->GetText() == input_name) { target_input_label = ilbl_uptr.get(); break; }
+              }
+              XMFLOAT2 end(target_node->window.translation.x + 6.0f, target_input_label ? (target_input_label->translation.y + target_input_label->scale.y * 0.5f) : (target_node->window.translation.y + target_node->window.scale.y * 0.5f));
+              if (testSegment(astart, end) <= thr2) { hit = crow; break; }
+            }
+            if (hit) { selectedConnection = hit; break; }
+          }
+          if (hit) break;
+        }
+        if (!hit) selectedConnection = nullptr;
+      }
+
+      // Add anchor on right click when a wire is selected and not clicking an anchor
+      if (!anchorRight.active && selectedConnection && wi::input::Press(wi::input::MOUSE_BUTTON_RIGHT)) {
+        XMFLOAT4 pointer2 = wi::input::GetPointer();
+        XMFLOAT2 p2 = XMFLOAT2(pointer2.x, pointer2.y);
+        XMFLOAT2 local = XMFLOAT2(p2.x - scrollable_area.translation.x, p2.y - scrollable_area.translation.y);
+        uint32_t hid = CreateHub(local);
+        selectedConnection->anchorHubIds.push_back(hid);
+      }
+    }
+  }
 
   // Process any node removals queued during child updates (e.g., close button)
   if (!pendingRemoval.empty()) {
@@ -340,7 +681,7 @@ void NodeEditorWindow::Node::AddOutputRow(NodeEditorWindow* owner, const std::st
   outputRows.push_back(std::move(row));
 }
 
-void NodeEditorWindow::Node::AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName) {
+NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName) {
   auto row = std::make_unique<ConnectionUI>();
   row->outputName = outputName;
 
@@ -384,7 +725,9 @@ void NodeEditorWindow::Node::AddConnectionRow(NodeEditorWindow* owner, const std
   });
   window.AddWidget(&row->removeButton);
 
+  ConnectionUI* ret = row.get();
   connectionRows.push_back(std::move(row));
+  return ret;
 }
 
 void NodeEditorWindow::Node::RemoveConnectionRow(NodeEditorWindow* owner, ConnectionUI* row) {
@@ -494,6 +837,36 @@ void NodeEditorWindow::RemoveNode(Node* node) {
   }
 
   // No global relayout on removal to preserve existing positions
+  // Cleanup hubs that may have become unreferenced
+  for (int i = (int)hubs.size() - 1; i >= 0; --i) {
+    DeleteHubIfUnreferenced(hubs[i].id);
+  }
 }
 
 // (Zoom functionality removed)
+
+// Shared hub helpers:
+NodeEditorWindow::RerouteHub* NodeEditorWindow::GetHub(uint32_t id) {
+  for (auto& h : hubs) if (h.id == id) return &h;
+  return nullptr;
+}
+const NodeEditorWindow::RerouteHub* NodeEditorWindow::GetHub(uint32_t id) const {
+  for (auto& h : hubs) if (h.id == id) return &h;
+  return nullptr;
+}
+uint32_t NodeEditorWindow::CreateHub(const XMFLOAT2& local) {
+  RerouteHub h; h.id = nextHubId++; h.pos = local; hubs.push_back(h); return h.id;
+}
+void NodeEditorWindow::DeleteHubIfUnreferenced(uint32_t id) {
+  bool used = false;
+  for (auto& n : nodes) {
+    for (auto& cr : n->connectionRows) {
+      for (auto hid : cr->anchorHubIds) { if (hid == id) { used = true; break; } }
+      if (used) break;
+    }
+    if (used) break;
+  }
+  if (!used) {
+    for (size_t i = 0; i < hubs.size(); ++i) { if (hubs[i].id == id) { hubs.erase(hubs.begin() + i); break; } }
+  }
+}
