@@ -574,10 +574,10 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
         }
         if (!wi::input::Down(wi::input::MOUSE_BUTTON_LEFT)) {
           // Left release: attempt merge with other anchors of same node+output
-          if (anchorDrag.conn) {
-            const std::string outname = anchorDrag.conn->outputName;
-            auto* myhub = GetHub(anchorDrag.conn->anchorHubIds[anchorDrag.index]);
-            XMFLOAT2 my = myhub ? myhub->pos : XMFLOAT2(0,0);
+      if (anchorDrag.conn) {
+        const std::string outname = anchorDrag.conn->outputName;
+        auto* myhub = GetHub(anchorDrag.conn->anchorHubIds[anchorDrag.index]);
+        XMFLOAT2 my = myhub ? myhub->pos : XMFLOAT2(0,0);
             Node* owner = nullptr;
             for (auto& n : nodes) {
               for (auto& cr : n->connectionRows) if (cr.get() == anchorDrag.conn) { owner = n.get(); break; }
@@ -595,9 +595,12 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
                   XMFLOAT2 other = otherhub->pos;
                   float dx = my.x - other.x; float dy = my.y - other.y;
                   if (dx * dx + dy * dy <= mergeThr2) {
-                    // rebind to shared hub id
+                    // rebind to shared hub id: dec old, inc new
                     uint32_t old = anchorDrag.conn->anchorHubIds[anchorDrag.index];
-                    anchorDrag.conn->anchorHubIds[anchorDrag.index] = cr2->anchorHubIds[j];
+                    if (auto* h = GetHub(old)) { if (h->refcount > 0) h->refcount--; }
+                    uint32_t newid = cr2->anchorHubIds[j];
+                    anchorDrag.conn->anchorHubIds[anchorDrag.index] = newid;
+                    if (auto* h2 = GetHub(newid)) { h2->refcount++; }
                     DeleteHubIfUnreferenced(old);
                     merged = true; break;
                   }
@@ -635,6 +638,8 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           if (!anchorRight.moved && anchorRight.conn && anchorRight.index >= 0 && anchorRight.index < (int)anchorRight.conn->anchorHubIds.size()) {
             // treat as delete anchor
             uint32_t hid = anchorRight.conn->anchorHubIds[anchorRight.index];
+            // dec ref before removing
+            if (auto* h = GetHub(hid)) { if (h->refcount > 0) h->refcount--; }
             anchorRight.conn->anchorHubIds.erase(anchorRight.conn->anchorHubIds.begin() + anchorRight.index);
             DeleteHubIfUnreferenced(hid);
           }
@@ -732,6 +737,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
         XMFLOAT2 p2 = XMFLOAT2(pointer2.x, pointer2.y);
         XMFLOAT2 local = XMFLOAT2(p2.x - scrollable_area.translation.x, p2.y - scrollable_area.translation.y);
         uint32_t hid = CreateHub(local);
+        if (auto* h = GetHub(hid)) { h->refcount++; }
         selectedConnection->anchorHubIds.push_back(hid);
       }
     }
@@ -752,19 +758,15 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
         if (selectedConnection == cr) selectedConnection = master;
         // unify hubs: bind duplicate to master's hub chain
         if (cr->anchorHubIds != master->anchorHubIds) {
-          // release old hubs if unreferenced
-          auto old = cr->anchorHubIds;
+          // decrement old hubs
+          for (auto hid : cr->anchorHubIds) {
+            if (auto* h = GetHub(hid)) { if (h->refcount > 0) h->refcount--; }
+            DeleteHubIfUnreferenced(hid);
+          }
+          // assign new hubs and increment refs
           cr->anchorHubIds = master->anchorHubIds;
-          for (auto hid : old) {
-            bool stillUsed = false;
-            // check other connections
-            for (auto& cr2_uptr : n->connectionRows) {
-              auto* cr2 = cr2_uptr.get();
-              if (cr2 == cr) continue;
-              for (auto id2 : cr2->anchorHubIds) { if (id2 == hid) { stillUsed = true; break; } }
-              if (stillUsed) break;
-            }
-            if (!stillUsed) DeleteHubIfUnreferenced(hid);
+          for (auto hid : cr->anchorHubIds) {
+            if (auto* h = GetHub(hid)) { h->refcount++; }
           }
         }
       }
@@ -1078,6 +1080,7 @@ void NodeEditorWindow::Node::RemoveConnectionRow(NodeEditorWindow* owner, Connec
     if (it->get() == row) { connectionRows.erase(it); break; }
   }
   for (auto hid : hubs_to_check) {
+    if (auto* h = owner->GetHub(hid)) { if (h->refcount > 0) h->refcount--; }
     owner->DeleteHubIfUnreferenced(hid);
   }
   if (owner) owner->layoutDirty = true;
@@ -1233,26 +1236,21 @@ void NodeEditorWindow::RenameNode(Node* node, const std::string& newname) {
 
 // Shared hub helpers:
 NodeEditorWindow::RerouteHub* NodeEditorWindow::GetHub(uint32_t id) {
-  for (auto& h : hubs) if (h.id == id) return &h;
-  return nullptr;
+  auto it = hubs.find(id);
+  return it == hubs.end() ? nullptr : &it->second;
 }
 const NodeEditorWindow::RerouteHub* NodeEditorWindow::GetHub(uint32_t id) const {
-  for (auto& h : hubs) if (h.id == id) return &h;
-  return nullptr;
+  auto it = hubs.find(id);
+  return it == hubs.end() ? nullptr : &it->second;
 }
 uint32_t NodeEditorWindow::CreateHub(const XMFLOAT2& local) {
-  RerouteHub h; h.id = nextHubId++; h.pos = local; hubs.push_back(h); return h.id;
+  RerouteHub h; h.id = nextHubId++; h.pos = local; h.refcount = 0;
+  hubs.emplace(h.id, h);
+  return h.id;
 }
 void NodeEditorWindow::DeleteHubIfUnreferenced(uint32_t id) {
-  bool used = false;
-  for (auto& n : nodes) {
-    for (auto& cr : n->connectionRows) {
-      for (auto hid : cr->anchorHubIds) { if (hid == id) { used = true; break; } }
-      if (used) break;
-    }
-    if (used) break;
-  }
-  if (!used) {
-    for (size_t i = 0; i < hubs.size(); ++i) { if (hubs[i].id == id) { hubs.erase(hubs.begin() + i); break; } }
+  auto it = hubs.find(id);
+  if (it != hubs.end() && it->second.refcount == 0) {
+    hubs.erase(it);
   }
 }

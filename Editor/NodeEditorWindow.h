@@ -121,8 +121,9 @@ private:
   struct RerouteHub {
     uint32_t id = 0;
     XMFLOAT2 pos = XMFLOAT2(0,0);
+    uint32_t refcount = 0;
   };
-  wi::vector<RerouteHub> hubs;
+  std::unordered_map<uint32_t, RerouteHub> hubs;
   uint32_t nextHubId = 1;
   RerouteHub* GetHub(uint32_t id);
   const RerouteHub* GetHub(uint32_t id) const;
