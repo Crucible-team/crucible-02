@@ -185,19 +185,27 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           sy = src_orow->label.translation.y + src_orow->label.scale.y * 0.5f;
         }
 
-        // Determine target nodes by target field (can be multiple)
+        // Determine target nodes by target field (can be multiple) with entity binding support
         std::string target_text = GetFieldText(crow->target);
         if (target_text == "!self" || target_text.empty()) {
           // self target: don't draw a wire, it's indicated by row highlight
           continue;
         }
 
-        // Deduplication will be performed per-target node below (key includes target pointer)
+        // If entity binding is present, prefer that unique target
 
-        // Determine target nodes by name via index (supports duplicates)
+        // Determine target nodes by name via index (supports duplicates),
+        // or a single target via entity binding if available
         wi::vector<const Node*> targets;
-        if (auto itnode = nodeIndex.find(target_text); itnode != nodeIndex.end()) {
-          for (auto* cand : itnode->second) if (cand != n.get()) targets.push_back(cand);
+        if (crow->targetEntity != wi::ecs::INVALID_ENTITY) {
+          auto itent = entityIndex.find(crow->targetEntity);
+          if (itent != entityIndex.end() && itent->second != n.get()) {
+            targets.push_back(itent->second);
+          }
+        } else {
+          if (auto itnode = nodeIndex.find(target_text); itnode != nodeIndex.end()) {
+            for (auto* cand : itnode->second) if (cand != n.get()) targets.push_back(cand);
+          }
         }
         if (targets.empty()) continue;
 
@@ -1229,6 +1237,7 @@ void NodeEditorWindow::RenameNode(Node* node, const std::string& newname) {
   }
   node->name = newname;
   node->label.SetText(newname);
+  node->window.SetText(newname);
   nodeIndex[newname].push_back(node);
 }
 
@@ -1252,5 +1261,45 @@ void NodeEditorWindow::DeleteHubIfUnreferenced(uint32_t id) {
   auto it = hubs.find(id);
   if (it != hubs.end() && it->second.refcount == 0) {
     hubs.erase(it);
+  }
+}
+void NodeEditorWindow::OnEntityRenamed(wi::ecs::Entity entity, const std::string& newname) {
+  auto it = entityIndex.find(entity);
+  if (it != entityIndex.end()) {
+    Node* nd = it->second;
+    if (nd && nd->name != newname) {
+      // capture old name and multiplicity before renaming to decide on name-only updates safely
+      std::string oldname = nd->name;
+      size_t oldCount = 0;
+      if (auto itold = nodeIndex.find(oldname); itold != nodeIndex.end()) {
+        oldCount = itold->second.size(); // includes this node
+      }
+
+      RenameNode(nd, newname);
+      nd->pinCacheDirty = true;
+      layoutDirty = true;
+
+      // Update any connection rows that strongly bind to this entity
+      for (auto& n : nodes) {
+        for (auto& cr : n->connectionRows) {
+          if (cr->targetEntity == entity) {
+            cr->target.SetValue(newname);
+          }
+        }
+      }
+
+      // Optional safe fix-up for name-only targets:
+      // If this node was the ONLY node with oldname (oldCount == 1), then update all name-only
+      // connection rows (targetEntity == INVALID_ENTITY) that target oldname to the newname.
+      if (oldCount == 1) {
+        for (auto& n : nodes) {
+          for (auto& cr : n->connectionRows) {
+            if (cr->targetEntity == wi::ecs::INVALID_ENTITY && GetFieldText(cr->target) == oldname) {
+              cr->target.SetValue(newname);
+            }
+          }
+        }
+      }
+    }
   }
 }

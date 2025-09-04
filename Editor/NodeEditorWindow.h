@@ -34,6 +34,8 @@ public:
       wi::gui::TextInputField delay;   // seconds
       wi::gui::Button removeButton;
       wi::vector<uint32_t> anchorHubIds;    // reroute anchors referencing shared hubs
+      // Optional strong binding to a specific entity target; UI target text mirrors NameComponent
+      wi::ecs::Entity targetEntity = wi::ecs::INVALID_ENTITY;
     };
     wi::vector<std::unique_ptr<OutputUI>> outputRows;
     wi::vector<std::unique_ptr<ConnectionUI>> connectionRows;
@@ -73,6 +75,8 @@ public:
   void Render(const wi::Canvas &canvas,
               wi::graphics::CommandList cmd) const override;
   void ResizeLayout() override;
+  // External notifications:
+  void OnEntityRenamed(wi::ecs::Entity entity, const std::string& newname);
 
 private:
   void AddNode();
