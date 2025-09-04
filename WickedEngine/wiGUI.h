@@ -906,6 +906,10 @@ namespace wi::gui
 		void SetTheme(const Theme& theme, int id = -1) override;
 		const char* GetWidgetTypeName() const override { return "Window"; }
 
+		// Propagate title text changes to titlebar widgets
+		using Widget::SetText; // keep other overloads visible
+		void SetTitle(const std::string& value);
+
 		void SetVisible(bool value) override;
 		void SetEnabled(bool value) override;
 		void SetCollapsed(bool value);

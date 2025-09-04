@@ -1,11 +1,9 @@
-// clang-format off
+
 #include "stdafx.h"
 #include "NodeEditorWindow.h"
 #include "wiImage.h"
 #include "wiScene.h"
-#include <unordered_set>
-#include <unordered_map>
-// clang-format on
+
 
 using namespace wi::graphics;
 using namespace wi::gui;
@@ -21,6 +19,11 @@ static std::string GetFieldText(const wi::gui::TextInputField& f)
 }
 
 static const float separator = 140.0f;
+// Autosize configuration
+static const float NODE_AUTOSIZE_SHRINK_DELAY = 0.4f;     
+static const float NODE_MAX_CONTENT_W = 900.0f;          
+static const float NODE_MIN_CONTENT_W = 200.0f;          
+static const float NODE_AUTOSIZE_THROTTLE = 1.0f / 15.0f;
 
 void NodeEditorWindow::Create(EditorComponent *_editor) {
   editor = _editor;
@@ -28,11 +31,6 @@ void NodeEditorWindow::Create(EditorComponent *_editor) {
 
   wi::gui::Window::Create("Node Editor");
 
- // RemoveWidget(&scrollbar_horizontal);
- // RemoveWidget(&scrollbar_vertical);
- // scrollable_area.Detach();
- // scrollable_area.SetEnabled(false);
- // scrollable_area.SetVisible(false);
 
   addNodeButton.Create("Add Node");
   addNodeButton.SetLocalizationEnabled(false);
@@ -46,7 +44,17 @@ void NodeEditorWindow::Create(EditorComponent *_editor) {
   importFromSceneButton.OnClick([this](wi::gui::EventArgs) { BuildNodesFromSceneMetadata(); });
   AddWidget(&importFromSceneButton, wi::gui::Window::AttachmentOptions::NONE);
 
-  // (Zoom slider removed)
+  addTimerButton.Create("Add Timer");
+  addTimerButton.SetLocalizationEnabled(false);
+  addTimerButton.SetSize(XMFLOAT2(120, 25));
+  addTimerButton.OnClick([this](wi::gui::EventArgs) { AddTimerNode(); });
+  AddWidget(&addTimerButton, wi::gui::Window::AttachmentOptions::NONE);
+
+  addSequenceButton.Create("Add Sequence");
+  addSequenceButton.SetLocalizationEnabled(false);
+  addSequenceButton.SetSize(XMFLOAT2(120, 25));
+  addSequenceButton.OnClick([this](wi::gui::EventArgs) { AddSequenceNode(); });
+  AddWidget(&addSequenceButton, wi::gui::Window::AttachmentOptions::NONE);
 
   SetVisible(false);
 }
@@ -56,7 +64,6 @@ void NodeEditorWindow::BuildNodesFromSceneMetadata() {
   wi::scene::Scene& scene = editor->GetCurrentScene();
   const auto& entities = scene.metadatas.GetEntityArray();
   for (wi::ecs::Entity e : entities) {
-    // Don't recreate if already added
     if (entityIndex.find(e) != entityIndex.end()) continue;
     std::string nm;
     if (auto* nc = scene.names.GetComponent(e)) nm = nc->name; else nm = std::to_string((uint64_t)e);
@@ -80,13 +87,12 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
 
     // Draw IO pins and self-target highlights per node (for visualization)
     for (auto& n : nodes) {
-      const auto& wnd = n->window;
       const float pinR = 4.0f;
       // Inputs on left (use cached positions to avoid transient jitter)
       for (size_t i = 0; i < n->inputLabels.size(); ++i) {
         auto& il = n->inputLabels[i];
         XMFLOAT2 pinpos = (i < n->cachedInputPins.size()) ? n->cachedInputPins[i] : XMFLOAT2(il->translation.x - 6.0f, il->translation.y + il->scale.y * 0.5f);
-        float cx = pinpos.x; // just left to the label
+        float cx = pinpos.x;
         float cy = pinpos.y;
         bool isHover = drag.active && drag.hoverNode == n.get() && drag.hoverInput == il.get();
         wi::image::Params pin;
@@ -99,7 +105,6 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
         for (int i = 0; i < arraysize(pin.corners_rounding); ++i) pin.corners_rounding[i].radius = r;
         wi::image::Draw(nullptr, pin, cmd);
         if (isHover) {
-          // subtle outer ring to indicate snap target
           wi::image::Params ring = pin;
           ring.siz = XMFLOAT2((r + 4.0f) * 2, (r + 4.0f) * 2);
           ring.color = XMFLOAT4(0.4f, 1.0f, 0.6f, 0.25f);
@@ -108,7 +113,7 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
       }
       // Outputs on right: one pin per output header row, with self-target highlight (anchor to header widgets)
       for (auto& orow : n->outputRows) {
-        // Check if any connection for this output targets self
+        
         bool self_target = false;
         for (auto& crow : n->connectionRows) {
           if (crow->outputName != orow->name) continue;
@@ -125,7 +130,6 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           wi::image::Draw(nullptr, bg, cmd);
         }
 
-        // Use cached output pin position when available
         XMFLOAT2 pinpos = {};
         bool foundCache = false;
         for (auto& co : n->cachedOutputPins) {
@@ -159,20 +163,16 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
       }
     }
 
-    // Draw connection wires based on connection rows (deduplicated by key)
+    // Draw connection wires
     for (const auto& n : nodes) {
-      const auto& wnd = n->window;
-      std::unordered_set<std::string> seen_keys;
       for (const auto& crow_uptr : n->connectionRows) {
         const auto* crow = crow_uptr.get();
-        // find source output header row by name
         const Node::OutputUI* src_orow = nullptr;
         for (const auto& orow_uptr : n->outputRows) {
           if (orow_uptr->name == crow->outputName) { src_orow = orow_uptr.get(); break; }
         }
         if (!src_orow) continue;
 
-        // Source pin position: use cached output pin position when possible
         float sx, sy;
         bool foundCache = false;
         for (auto& co : n->cachedOutputPins) {
@@ -188,14 +188,9 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
         // Determine target nodes by target field (can be multiple) with entity binding support
         std::string target_text = GetFieldText(crow->target);
         if (target_text == "!self" || target_text.empty()) {
-          // self target: don't draw a wire, it's indicated by row highlight
           continue;
         }
 
-        // If entity binding is present, prefer that unique target
-
-        // Determine target nodes by name via index (supports duplicates),
-        // or a single target via entity binding if available
         wi::vector<const Node*> targets;
         if (crow->targetEntity != wi::ecs::INVALID_ENTITY) {
           auto itent = entityIndex.find(crow->targetEntity);
@@ -221,7 +216,6 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           float ex;
           float ey;
           if (target_input_label) {
-            // use cached input pin position for target node when available
             bool foundTargetCache = false;
             for (size_t i = 0; i < target_node->inputLabels.size(); ++i) {
               if (target_node->inputLabels[i].get() == target_input_label) {
@@ -234,12 +228,10 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
               ey = target_input_label->translation.y + target_input_label->scale.y * 0.5f;
             }
           } else {
-            // Fallback to center-left of target window
             ex = target_node->window.translation.x + 6.0f;
             ey = target_node->window.translation.y + target_node->window.scale.y * 0.5f;
           }
 
-          // Draw piecewise segments through anchors (if any)
           XMFLOAT4 col = (selectedConnection == crow) ? XMFLOAT4(1.0f, 0.9f, 0.6f, 1) : XMFLOAT4(0.6f, 1.0f, 0.6f, 1);
           XMFLOAT2 astart(sx, sy);
           if (!crow->anchorHubIds.empty()) {
@@ -251,8 +243,6 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
             }
           }
           wi::gui::DrawWireBezierStrip(astart, XMFLOAT2(ex, ey), 2.0f, col, canvas, cmd);
-
-          // Draw anchors if selected
           if (selectedConnection == crow) {
             for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
               const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
@@ -277,7 +267,6 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
       float sx = 0.0f;
       float sy = 0.0f;
       if (drag.fromAnchor) {
-        // If dragging from an anchor, use the hub's current position
         if (anchorRight.active && anchorRight.conn && anchorRight.index >= 0 && anchorRight.index < (int)anchorRight.conn->anchorHubIds.size()) {
           const auto* hub = GetHub(anchorRight.conn->anchorHubIds[anchorRight.index]);
           if (hub) {
@@ -287,7 +276,6 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
         }
       }
       if (sx == 0.0f && sy == 0.0f) {
-        // Fallback to current output pin position
         float headerRight = std::max(drag.srcOutput->label.translation.x + drag.srcOutput->label.scale.x,
                                      drag.srcOutput->addButton.translation.x + drag.srcOutput->addButton.scale.x);
         sx = headerRight + 6.0f;
@@ -296,7 +284,6 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
 
       float ex = drag.cursor.x;
       float ey = drag.cursor.y;
-      // snap preview end to hovered input pin if any
       if (drag.hoverNode && drag.hoverInput) {
         ex = drag.hoverNode->window.translation.x + 6.0f;
         ey = drag.hoverInput->translation.y + drag.hoverInput->scale.y * 0.5f;
@@ -335,6 +322,18 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     importFromSceneButton.sprites[i].params.corners_rounding[1].radius = radius;
     importFromSceneButton.sprites[i].params.corners_rounding[2].radius = radius;
     importFromSceneButton.sprites[i].params.corners_rounding[3].radius = radius;
+
+    addTimerButton.sprites[i].params.enableCornerRounding();
+    addTimerButton.sprites[i].params.corners_rounding[0].radius = radius;
+    addTimerButton.sprites[i].params.corners_rounding[1].radius = radius;
+    addTimerButton.sprites[i].params.corners_rounding[2].radius = radius;
+    addTimerButton.sprites[i].params.corners_rounding[3].radius = radius;
+
+    addSequenceButton.sprites[i].params.enableCornerRounding();
+    addSequenceButton.sprites[i].params.corners_rounding[0].radius = radius;
+    addSequenceButton.sprites[i].params.corners_rounding[1].radius = radius;
+    addSequenceButton.sprites[i].params.corners_rounding[2].radius = radius;
+    addSequenceButton.sprites[i].params.corners_rounding[3].radius = radius;
   }
 
   for (auto &node : nodes) {
@@ -350,6 +349,8 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
 
   addNodeButton.SetShadowRadius(0);
   importFromSceneButton.SetShadowRadius(0);
+  addTimerButton.SetShadowRadius(0);
+  addSequenceButton.SetShadowRadius(0);
 
   // Drag & drop from output pin to input pin:
   {
@@ -357,7 +358,6 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     XMFLOAT2 p = XMFLOAT2(pointer.x, pointer.y);
     const float pinDetectR = 8.0f;
 
-    // Begin drag if pressed on an output pin
     if (!drag.active && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT)) {
       for (auto& n : nodes) {
         const float cx_base = n->window.translation.x + n->window.scale.x - 6.0f;
@@ -441,7 +441,6 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     // Update drag
     if (drag.active) {
       drag.cursor = p;
-      // find closest input pin under cursor
       drag.hoverNode = nullptr;
       drag.hoverInput = nullptr;
       float bestDist2 = pinDetectR * pinDetectR;
@@ -482,7 +481,6 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           if (!exists) {
             drag.movingConnection->target.SetValue(newTarget);
             drag.movingConnection->input.SetValue(newInput);
-            // keep original param/delay
             drag.movingOwner->LayoutRows();
             selectedConnection = drag.movingConnection;
           }
@@ -506,7 +504,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
         selectedConnection = nullptr;
         layoutDirty = true;
       }
-      drag = DragState{}; // reset
+      drag = DragState{};
     }
   }
 
@@ -662,7 +660,6 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
         const float threshold = 6.0f; // px
         const float thr2 = threshold * threshold;
         for (auto& n : nodes) {
-          const auto& wnd = n->window;
           for (auto& crow_uptr : n->connectionRows) {
             auto* crow = crow_uptr.get();
             // Determine targets by index (support duplicates)
@@ -674,7 +671,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             }
             if (targets.empty()) continue;
 
-            // Source pos
+            
             const Node::OutputUI* src_orow = nullptr;
             for (const auto& orow_uptr : n->outputRows) if (orow_uptr->name == crow->outputName) { src_orow = orow_uptr.get(); break; }
             if (!src_orow) continue;
@@ -692,7 +689,6 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
               float dx = p.x - H.x; float dy = p.y - H.y; return dx * dx + dy * dy;
             };
 
-            // through anchors (shared hubs)
             if (!crow->anchorHubIds.empty()) {
               for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
                 const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
@@ -702,7 +698,6 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
               }
             }
             if (hit) { selectedConnection = hit; break; }
-            // to each target (test last segment to target input)
             const std::string input_name = crow->input.GetText();
             for (const Node* target_node : targets) {
               const wi::gui::Label* target_input_label = nullptr;
@@ -781,6 +776,64 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     }
   }
 
+  // Live autosize: per-node dirty while fields are active, with throttling.
+  // Also run shrink debounce logic when content allows shrinking
+  {
+    // Update activeEditing/needsLayout per node and throttle timers
+    for (auto& n : nodes) {
+      bool active = false;
+      for (auto& cr : n->connectionRows) {
+        if (cr->target.GetState() == wi::gui::ACTIVE) { active = true; break; }
+        if (cr->input.GetState()  == wi::gui::ACTIVE) { active = true; break; }
+        if (cr->param.GetState()  == wi::gui::ACTIVE) { active = true; break; }
+        if (cr->delay.GetState()  == wi::gui::ACTIVE) { active = true; break; }
+      }
+      n->activeEditing = active;
+      if (active) n->needsLayout = true;
+      if (n->autosizeThrottleTimer > 0.0f) {
+        n->autosizeThrottleTimer = std::max(0.0f, n->autosizeThrottleTimer - dt);
+      }
+    }
+
+    // Per-node throttled relayout
+    for (auto& n : nodes) {
+      if (n->needsLayout && n->autosizeThrottleTimer <= 0.0f) {
+        n->LayoutRows();
+        n->pinCacheDirty = true;
+        n->autosizeThrottleTimer = NODE_AUTOSIZE_THROTTLE;
+        // keep needsLayout true while editing so it keeps reflowing on throttle
+      }
+    }
+
+    // Debounced shrink per node
+    const float start_x = 6.0f; // must match Node::LayoutRows padding
+    for (auto& n : nodes) {
+      const float current_content_w = n->window.GetSize().x - start_x * 2.0f;
+      const float desired_w = std::max(NODE_MIN_CONTENT_W, std::min(n->measuredContentWidth, NODE_MAX_CONTENT_W));
+      if (desired_w + 1.0f < current_content_w) { // early exit threshold
+        n->autosizeShrinkTimer += dt;
+        if (n->autosizeShrinkTimer >= NODE_AUTOSIZE_SHRINK_DELAY) {
+          const XMFLOAT2 cur = n->window.GetSize();
+          n->window.SetSize(XMFLOAT2(start_x * 2.0f + desired_w, cur.y));
+          n->pinCacheDirty = true;
+          layoutDirty = true;
+          n->autosizeShrinkTimer = 0.0f;
+        }
+      } else {
+        n->autosizeShrinkTimer = 0.0f;
+      }
+    }
+  }
+
+  // If any operation marked layout dirty, re-flow node UIs before pin caching
+  if (layoutDirty) {
+    for (auto& n : nodes) {
+      n->LayoutRows();
+      n->needsLayout = false;
+      n->autosizeThrottleTimer = 0.0f; // allow immediate next relayout
+    }
+  }
+
   // Recompute pin caches after all updates/layouts for this frame
   for (auto& n : nodes) {
     n->ComputePinCache();
@@ -825,7 +878,6 @@ void NodeEditorWindow::ResizeLayout() {
       XMFLOAT2(separator - padding * 2, addNodeButton.GetSize().y));
   addNodeButton.AttachTo(this);
 
-  // Place Import button above Add Node
   importFromSceneButton.Detach();
   importFromSceneButton.SetSize(XMFLOAT2(separator - padding * 2, importFromSceneButton.GetSize().y));
   importFromSceneButton.SetPos(XMFLOAT2(
@@ -833,7 +885,19 @@ void NodeEditorWindow::ResizeLayout() {
       addNodeButton.GetPos().y - importFromSceneButton.GetSize().y - padding));
   importFromSceneButton.AttachTo(this);
 
-  // (Zoom slider removed)
+  addSequenceButton.Detach();
+  addSequenceButton.SetSize(XMFLOAT2(separator - padding * 2, addSequenceButton.GetSize().y));
+  addSequenceButton.SetPos(XMFLOAT2(
+      translation.x + padding,
+      importFromSceneButton.GetPos().y - addSequenceButton.GetSize().y - padding));
+  addSequenceButton.AttachTo(this);
+
+  addTimerButton.Detach();
+  addTimerButton.SetSize(XMFLOAT2(separator - padding * 2, addTimerButton.GetSize().y));
+  addTimerButton.SetPos(XMFLOAT2(
+      translation.x + padding,
+      addSequenceButton.GetPos().y - addTimerButton.GetSize().y - padding));
+  addTimerButton.AttachTo(this);
 
   if (recentlyAddedNewNode)
   {
@@ -871,14 +935,15 @@ void NodeEditorWindow::ResizeLayout() {
 void NodeEditorWindow::AddNode() {
   std::string name = "Node " + std::to_string(nodes.size() + 1);
   auto node = std::make_unique<Node>(name);
+  node->type = Node::NodeType::LogicOnly;
   node->window.Create(
       name,
-      Window::WindowControls::MOVE |
-          Window::WindowControls::CLOSE |
-          Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL /*|
-                              Window::WindowControls::DISABLE_TITLE_BAR*/);
-  // Give more horizontal room so the Delay field is usable
-  node->window.SetSize(XMFLOAT2(340, 110));
+	  Window::WindowControls::MOVE |
+	  Window::WindowControls::CLOSE |
+	  Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL/* |
+	  Window::WindowControls::RESIZE_LEFT |
+	  Window::WindowControls::RESIZE_RIGHT*/);
+  node->window.SetSize(XMFLOAT2(NODE_MIN_CONTENT_W, 110));
 
   node->label.Create(name);
   node->label.SetText(name);
@@ -892,11 +957,9 @@ void NodeEditorWindow::AddNode() {
   node->inputs.push_back("Enable");
   node->inputs.push_back("Disable");
 
-  // Build output rows with add buttons
   for (auto& outname : node->outputs) {
     node->AddOutputRow(this, outname);
   }
-  // Build input labels (read-only visuals)
   for (auto& inname : node->inputs) {
     auto lbl = std::make_unique<wi::gui::Label>();
     lbl->Create(inname);
@@ -908,10 +971,7 @@ void NodeEditorWindow::AddNode() {
   }
   node->LayoutRows();
   layoutDirty = true;
- 
-  // Register the node window as a child widget so it can be rendered,
-  // updated and receive input events (such as moving and interacting
-  // with widgets inside it).
+
   AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
   node->window.SetEnabled(true);
   node->window.SetVisible(true);
@@ -935,16 +995,19 @@ void NodeEditorWindow::AddNode() {
 
 void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& name) {
   if (ent == wi::ecs::INVALID_ENTITY) return;
-  if (entityIndex.find(ent) != entityIndex.end()) return; // already exists
+  if (entityIndex.find(ent) != entityIndex.end()) return;
 
   auto node = std::make_unique<Node>(name);
   node->entity = ent;
+  node->type = Node::NodeType::EntityBound;
   node->window.Create(
       name,
-      Window::WindowControls::MOVE |
-          Window::WindowControls::CLOSE |
-          Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
-  node->window.SetSize(XMFLOAT2(280, 100));
+	  Window::WindowControls::MOVE |
+	  Window::WindowControls::CLOSE |
+	  Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL/* |
+	  Window::WindowControls::RESIZE_LEFT |
+	  Window::WindowControls::RESIZE_RIGHT*/);
+  node->window.SetSize(XMFLOAT2(NODE_MIN_CONTENT_W, 100));
 
   node->label.Create(name);
   node->label.SetText(name);
@@ -968,7 +1031,6 @@ void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& 
   }
   node->LayoutRows();
 
-  // Register the node window to render/update
   AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
   node->window.SetEnabled(true);
   node->window.SetVisible(true);
@@ -996,7 +1058,8 @@ void NodeEditorWindow::Node::AddOutputRow(NodeEditorWindow* owner, const std::st
   row->label.Create(outputName);
   row->label.SetLocalizationEnabled(false);
   row->label.SetShadowRadius(0);
-  row->label.font.params.size = 14; // smaller label near pin
+  row->label.font.params.size = 14;
+  row->label.SetWrapEnabled(false);
   window.AddWidget(&row->label);
 
   row->addButton.Create("Add");
@@ -1022,30 +1085,35 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   row->outLabel.SetLocalizationEnabled(false);
   row->outLabel.SetShadowRadius(0);
   row->outLabel.font.params.size = 16;
+  row->outLabel.SetWrapEnabled(false);
   window.AddWidget(&row->outLabel);
 
   row->target.Create("Target");
   row->target.SetLocalizationEnabled(false);
   row->target.SetShadowRadius(0);
   row->target.SetValue("!self");
+  row->target.OnInputAccepted([this, owner](wi::gui::EventArgs){ if(owner) owner->layoutDirty = true; this->needsLayout = true; });
   window.AddWidget(&row->target);
 
   row->input.Create("Input");
   row->input.SetLocalizationEnabled(false);
   row->input.SetShadowRadius(0);
   row->input.SetValue("FunctionName");
+  row->input.OnInputAccepted([this, owner](wi::gui::EventArgs){ if(owner) owner->layoutDirty = true; this->needsLayout = true; });
   window.AddWidget(&row->input);
 
   row->param.Create("Param");
   row->param.SetLocalizationEnabled(false);
   row->param.SetShadowRadius(0);
   row->param.SetValue("");
+  row->param.OnInputAccepted([this, owner](wi::gui::EventArgs){ if(owner) owner->layoutDirty = true; this->needsLayout = true; });
   window.AddWidget(&row->param);
 
   row->delay.Create("Delay");
   row->delay.SetLocalizationEnabled(false);
   row->delay.SetShadowRadius(0);
   row->delay.SetValue("0.0");
+  row->delay.OnInputAccepted([this, owner](wi::gui::EventArgs){ if(owner) owner->layoutDirty = true; this->needsLayout = true; });
   window.AddWidget(&row->delay);
 
   row->removeButton.Create("x");
@@ -1081,7 +1149,7 @@ void NodeEditorWindow::Node::RemoveConnectionRow(NodeEditorWindow* owner, Connec
   row->delay.Detach();
   row->removeButton.Detach();
 
-  // Erase from list
+  
   // Save hubs to clean up after erasing
   auto hubs_to_check = row->anchorHubIds;
   for (auto it = connectionRows.begin(); it != connectionRows.end(); ++it) {
@@ -1101,37 +1169,104 @@ void NodeEditorWindow::Node::LayoutRows() {
   const float label_h = 18.0f;
   const float row_h = 22.0f;
   const float start_x = 6.0f;
-  const float w = window.GetSize().x - start_x * 2.0f;
+  // Current content width (inside left/right padding)
+  float w = window.GetSize().x - start_x * 2.0f;
+
+  // Heuristic text width estimator to drive auto-width growth
+  auto estimate_text_width = [](const std::string& s, float font_size) -> float {
+    // Average glyph width ~0.55 x font size
+    return std::max(0.0f, (float)s.size() * (std::max(10.0f, font_size) * 0.55f));
+  };
+
+  // Determine minimal content width required by longest visible labels.
+  // Start from minimum so we can also shrink when content gets smaller.
+  float required_content_w = NODE_MIN_CONTENT_W;
+
+  // Inputs: ensure the widest input label fits into its 70% allocation
+  for (auto& il : inputLabels) {
+    const float fs = (float)il->font.params.size;
+    const float tw = estimate_text_width(il->GetText(), fs) + padding * 2.0f;
+    // input area width is (w * 0.7f - padding)
+    required_content_w = std::max(required_content_w, (tw + padding) / 0.7f);
+  }
+
+  // Output header labels: 40% of content width reserved near the pin
+  for (auto& orow : outputRows) {
+    const float fs = (float)orow->label.font.params.size;
+    const float tw = estimate_text_width(orow->label.GetText(), fs) + padding * 2.0f;
+    required_content_w = std::max(required_content_w, (tw) / 0.40f);
+  }
+
+  // Connection rows: ensure the per-row output name label fits its 24% share
+  {
+    const float remove_w = 18.0f;
+    for (auto& crow : connectionRows) {
+      const float fs = (float)crow->outLabel.font.params.size;
+      const float tw = estimate_text_width(crow->outLabel.GetText(), fs) + padding * 2.0f;
+      // available width for columns (aw) = w - remove_w - padding*5
+      // outLabel gets 24% of aw => aw*0.24f >= tw  => w >= remove_w + padding*5 + tw/0.24
+      required_content_w = std::max(required_content_w, remove_w + padding * 5.0f + tw / 0.24f);
+
+      // Also consider user-editable fields (target/input/param) to avoid truncation.
+      // Use live input only when this node is actively being edited, otherwise stable value.
+      auto stable_field_text = [](const wi::gui::TextInputField& f) -> std::string {
+        wi::gui::TextInputField& nc = const_cast<wi::gui::TextInputField&>(f);
+        return nc.GetValue();
+      };
+      const float fs_field = (float)crow->input.font.params.size;
+      const std::string s_target = activeEditing ? GetFieldText(crow->target) : stable_field_text(crow->target);
+      const std::string s_input  = activeEditing ? GetFieldText(crow->input)  : stable_field_text(crow->input);
+      const std::string s_param  = activeEditing ? GetFieldText(crow->param)  : stable_field_text(crow->param);
+      const float tw_target = estimate_text_width(s_target, fs_field) + padding * 2.0f;
+      const float tw_input  = estimate_text_width(s_input,  fs_field) + padding * 2.0f;
+      const float tw_param  = estimate_text_width(s_param,  fs_field) + padding * 2.0f;
+      // target 28% of aw, input 20%, param 20%
+      required_content_w = std::max(required_content_w, remove_w + padding * 5.0f + tw_target / 0.28f);
+      required_content_w = std::max(required_content_w, remove_w + padding * 5.0f + tw_input  / 0.20f);
+      required_content_w = std::max(required_content_w, remove_w + padding * 5.0f + tw_param  / 0.20f);
+    }
+  }
+
+  // Clamp measured content width to configured bounds
+  required_content_w = std::max(NODE_MIN_CONTENT_W, std::min(required_content_w, NODE_MAX_CONTENT_W));
+  measuredContentWidth = required_content_w;
+
+  if (required_content_w > w + 0.5f) {
+    const XMFLOAT2 cur = window.GetSize();
+    // expand window width (content + paddings)
+    window.SetSize(XMFLOAT2(start_x * 2.0f + required_content_w, cur.y));
+    w = required_content_w; // use the grown width for this layout pass
+  }
 
   // 1) Inputs section (top area, left side)
   float y_inputs = 36.0f; // more breathing room under title bar
   for (auto& il : inputLabels) {
     il->SetPos(XMFLOAT2(start_x, y_inputs));
-    il->SetSize(XMFLOAT2(w * 0.5f - padding, row_h));
+    il->SetSize(XMFLOAT2(w * 0.7f - padding, row_h));
     y_inputs += row_h + padding;
   }
 
   // 2) Outputs section (below inputs)
   float y = y_inputs + section_gap;
   for (auto& orow : outputRows) {
-    // Output header row: small label next to pin, add button at far right
-    const float pinlabel_w = std::min(100.0f, w * 0.25f);
+    // Allow longer output names by widening the header label (40% of content)
+    const float pinlabel_w = w * 0.40f;
     orow->label.SetPos(XMFLOAT2(start_x + w - 40.0f - padding - pinlabel_w, y));
     orow->label.SetSize(XMFLOAT2(pinlabel_w, label_h));
     orow->addButton.SetPos(XMFLOAT2(start_x + w - 40.0f, y));
     y += label_h + padding;
 
-    // Connection rows that belong to this output
     for (auto& crow : connectionRows) {
       if (crow->outputName != orow->name) continue;
 
       float x = start_x;
       const float remove_w = 18.0f;
       const float aw = std::max(0.0f, w - remove_w - padding * 5.0f);
-      const float out_w    = aw * 0.18f;
-      const float target_w = aw * 0.28f;
-      const float input_w  = aw * 0.20f;
-      const float param_w  = aw * 0.20f;
+      // Allocate a bit more width to the output label to accommodate longer names
+      const float out_w    = aw * 0.24f;
+      const float target_w = aw * 0.26f;
+      const float input_w  = aw * 0.18f;
+      const float param_w  = aw * 0.18f;
       const float delay_w  = std::max(0.0f, aw - (out_w + target_w + input_w + param_w));
 
       crow->outLabel.SetPos(XMFLOAT2(x, y));
@@ -1238,10 +1373,12 @@ void NodeEditorWindow::RenameNode(Node* node, const std::string& newname) {
   node->name = newname;
   node->label.SetText(newname);
   node->window.SetText(newname);
+  node->window.SetName(newname);
+  node->window.SetTitle(newname);
   nodeIndex[newname].push_back(node);
 }
 
-// (Zoom functionality removed)
+
 
 // Shared hub helpers:
 NodeEditorWindow::RerouteHub* NodeEditorWindow::GetHub(uint32_t id) {
@@ -1302,4 +1439,100 @@ void NodeEditorWindow::OnEntityRenamed(wi::ecs::Entity entity, const std::string
       }
     }
   }
+}
+void NodeEditorWindow::AddTimerNode() {
+  std::string name = "Timer";
+  auto node = std::make_unique<Node>(name);
+  node->type = Node::NodeType::LogicOnly;
+  node->window.Create(
+      name,
+      Window::WindowControls::MOVE |
+      Window::WindowControls::CLOSE |
+      Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL /* |
+	  Window::WindowControls::RESIZE_LEFT |
+	  Window::WindowControls::RESIZE_RIGHT*/);
+  node->window.SetSize(XMFLOAT2(NODE_MIN_CONTENT_W, 120));
+
+  node->label.Create(name);
+  node->label.SetText(name);
+  node->label.SetPos(XMFLOAT2(4, 4));
+  node->label.SetSize(XMFLOAT2(112, 20));
+  node->window.AddWidget(&node->label);
+
+  // Logic-only: Inputs/Outputs
+  node->outputs = { "OnTick" };
+  node->inputs = { "StartTimer", "StopTimer" };
+  for (auto& outname : node->outputs) node->AddOutputRow(this, outname);
+  for (auto& inname : node->inputs) {
+    auto lbl = std::make_unique<wi::gui::Label>();
+    lbl->Create(inname);
+    lbl->SetLocalizationEnabled(false);
+    lbl->SetShadowRadius(0);
+    lbl->SetText(inname);
+    node->window.AddWidget(lbl.get());
+    node->inputLabels.push_back(std::move(lbl));
+  }
+  node->LayoutRows();
+
+  AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
+  node->window.SetEnabled(true);
+  node->window.SetVisible(true);
+
+  Node* raw = node.get();
+  node->window.OnClose([this, raw](wi::gui::EventArgs) { pendingRemoval.push_back(raw); });
+
+  nodes.push_back(std::move(node));
+  nodeIndex[raw->name].push_back(raw);
+  raw->pinCacheDirty = true;
+  recentlyAddedNewNode = true;
+  lastAddedNode = raw;
+  ResizeLayout();
+}
+
+void NodeEditorWindow::AddSequenceNode() {
+  std::string name = "Sequence";
+  auto node = std::make_unique<Node>(name);
+  node->type = Node::NodeType::LogicOnly;
+  node->window.Create(
+      name,
+      Window::WindowControls::MOVE |
+      Window::WindowControls::CLOSE |
+      Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL /* |
+	  Window::WindowControls::RESIZE_LEFT |
+	  Window::WindowControls::RESIZE_RIGHT*/);
+  node->window.SetSize(XMFLOAT2(NODE_MIN_CONTENT_W, 120));
+
+  node->label.Create(name);
+  node->label.SetText(name);
+  node->label.SetPos(XMFLOAT2(4, 4));
+  node->label.SetSize(XMFLOAT2(112, 20));
+  node->window.AddWidget(&node->label);
+
+  node->inputs = { "In" };
+  node->outputs = { "Then1", "Then2" };
+  for (auto& outname : node->outputs) node->AddOutputRow(this, outname);
+  for (auto& inname : node->inputs) {
+    auto lbl = std::make_unique<wi::gui::Label>();
+    lbl->Create(inname);
+    lbl->SetLocalizationEnabled(false);
+    lbl->SetShadowRadius(0);
+    lbl->SetText(inname);
+    node->window.AddWidget(lbl.get());
+    node->inputLabels.push_back(std::move(lbl));
+  }
+  node->LayoutRows();
+
+  AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
+  node->window.SetEnabled(true);
+  node->window.SetVisible(true);
+
+  Node* raw = node.get();
+  node->window.OnClose([this, raw](wi::gui::EventArgs) { pendingRemoval.push_back(raw); });
+
+  nodes.push_back(std::move(node));
+  nodeIndex[raw->name].push_back(raw);
+  raw->pinCacheDirty = true;
+  recentlyAddedNewNode = true;
+  lastAddedNode = raw;
+  ResizeLayout();
 }

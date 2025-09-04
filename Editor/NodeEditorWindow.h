@@ -4,18 +4,18 @@ class EditorComponent;
 #include <unordered_map>
 #include "wiECS.h"
 
-// Minimal node editor window mirroring Content Browser layout.
-// Functionality will be extended with actual node editing later.
 class NodeEditorWindow : public wi::gui::Window {
 public:
   void Create(EditorComponent *editor);
   void BuildNodesFromSceneMetadata();
 
   struct Node {
+    enum class NodeType { LogicOnly, EntityBound };
     wi::gui::Window window;
     wi::gui::Label label;
     std::string name;
     wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
+    NodeType type = NodeType::LogicOnly;
     // I/O visualization data for this node:
     wi::vector<std::string> inputs;   // function names (sinks)
     wi::vector<std::string> outputs;  // event names (sources)
@@ -39,7 +39,7 @@ public:
     };
     wi::vector<std::unique_ptr<OutputUI>> outputRows;
     wi::vector<std::unique_ptr<ConnectionUI>> connectionRows;
-    wi::vector<std::unique_ptr<wi::gui::Label>> inputLabels; // visual list of inputs
+    wi::vector<std::unique_ptr<wi::gui::Label>> inputLabels;
     wi::gui::Label bottomSpacer; // pushes window bottom to add padding
 
     // Cached pin positions (in screen space) to avoid one-frame jitter
@@ -48,6 +48,13 @@ public:
     wi::vector<CachedOutputPin> cachedOutputPins; // one per outputRows
     bool pinCacheDirty = true; // set when node moves or layout changes
     XMFLOAT2 lastWindowPos = XMFLOAT2(FLT_MAX, FLT_MAX);
+
+    // Autosize helpers
+    float measuredContentWidth = 0.0f;   // last measured required content width from LayoutRows()
+    float autosizeShrinkTimer = 0.0f;    // accumulates dt while eligible to shrink
+    float autosizeThrottleTimer = 0.0f;  // limits live relayout frequency while typing
+    bool needsLayout = false;            // per-node layout dirty
+    bool activeEditing = false;          // true if any field in this node is active
 
     void AddOutputRow(NodeEditorWindow* owner, const std::string& outputName);
     ConnectionUI* AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName);
@@ -69,6 +76,8 @@ public:
   wi::vector<std::unique_ptr<Node>> nodes;
   wi::gui::Button addNodeButton;
   wi::gui::Button importFromSceneButton;
+  wi::gui::Button addTimerButton;
+  wi::gui::Button addSequenceButton;
   bool recentlyAddedNewNode = false;
 
   void Update(const wi::Canvas &canvas, float dt) override;
@@ -81,11 +90,13 @@ public:
 private:
   void AddNode();
   void AddNodeForEntity(wi::ecs::Entity entity, const std::string& name);
+  void AddTimerNode();
+  void AddSequenceNode();
   void RemoveNode(Node* node);
   void RenameNode(Node* node, const std::string& newname);
   wi::vector<Node*> pendingRemoval;
   Node* lastAddedNode = nullptr; // track the last created node for centering
-  bool layoutDirty = true; // recompute pin caches only when layout changed
+  bool layoutDirty = true;
   std::unordered_map<std::string, wi::vector<Node*>> nodeIndex; // fast name->nodes lookup (supports duplicates)
   std::unordered_map<wi::ecs::Entity, Node*> entityIndex; // entity->node lookup
 

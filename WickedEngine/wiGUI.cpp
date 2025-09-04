@@ -4402,6 +4402,16 @@ namespace wi::gui
 			widget->SetTheme(theme, id);
 		}
 	}
+	void Window::SetTitle(const std::string& value)
+	{
+		Widget::SetText(value);
+		if (has_titlebar)
+		{
+			label.SetText(value);
+			moveDragger.SetText(value);
+		}
+		
+	}
 	void Window::ResizeLayout()
 	{
 		Widget::ResizeLayout();
