@@ -1,3 +1,4 @@
+#include <cfloat>
 #pragma once
 class EditorComponent;
 #include <unordered_map>
@@ -43,6 +44,8 @@ public:
     wi::vector<XMFLOAT2> cachedInputPins; // one-to-one with inputLabels
     struct CachedOutputPin { OutputUI* row = nullptr; XMFLOAT2 pos = XMFLOAT2(0,0); };
     wi::vector<CachedOutputPin> cachedOutputPins; // one per outputRows
+    bool pinCacheDirty = true; // set when node moves or layout changes
+    XMFLOAT2 lastWindowPos = XMFLOAT2(FLT_MAX, FLT_MAX);
 
     void AddOutputRow(NodeEditorWindow* owner, const std::string& outputName);
     ConnectionUI* AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName);

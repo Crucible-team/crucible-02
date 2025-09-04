@@ -786,15 +786,20 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     }
   }
 
-  // Ensure child node windows finalize their layout after any connection/UI changes this frame,
-  // then snapshot stable pin positions to avoid transient jitter during render.
-  if (layoutDirty) {
-    for (auto& n : nodes) {
+  // Ensure child node windows finalize layout and recompute pin caches for nodes that need it
+  for (auto& n : nodes) {
+    // mark dirty if window moved
+    if (n->lastWindowPos.x != n->window.translation.x || n->lastWindowPos.y != n->window.translation.y) {
+      n->pinCacheDirty = true;
+      n->lastWindowPos = XMFLOAT2(n->window.translation.x, n->window.translation.y);
+    }
+    if (n->pinCacheDirty) {
       n->window.Update(canvas, 0);
       n->ComputePinCache();
+      n->pinCacheDirty = false;
     }
-    layoutDirty = false;
   }
+  layoutDirty = false;
 }
 
 void NodeEditorWindow::ResizeLayout() {
@@ -912,6 +917,7 @@ void NodeEditorWindow::AddNode() {
   nodes.push_back(std::move(node));
   // index by name for fast lookup (support duplicates)
   nodeIndex[nodes.back()->name].push_back(nodes.back().get());
+  nodes.back()->pinCacheDirty = true;
   recentlyAddedNewNode = true;
   lastAddedNode = raw;
   ResizeLayout();
@@ -970,6 +976,7 @@ void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& 
   lastAddedNode = raw;
   ResizeLayout();
   layoutDirty = true;
+  raw->pinCacheDirty = true;
 }
 
 // ----- Node UI helpers -----
@@ -994,6 +1001,7 @@ void NodeEditorWindow::Node::AddOutputRow(NodeEditorWindow* owner, const std::st
 
   outputRows.push_back(std::move(row));
   if (owner) owner->layoutDirty = true;
+  pinCacheDirty = true;
 }
 
 NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName) {
@@ -1043,6 +1051,7 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   ConnectionUI* ret = row.get();
   connectionRows.push_back(std::move(row));
   if (owner) owner->layoutDirty = true;
+  pinCacheDirty = true;
   return ret;
 }
 
@@ -1072,6 +1081,7 @@ void NodeEditorWindow::Node::RemoveConnectionRow(NodeEditorWindow* owner, Connec
     owner->DeleteHubIfUnreferenced(hid);
   }
   if (owner) owner->layoutDirty = true;
+  pinCacheDirty = true;
 }
 
 void NodeEditorWindow::Node::LayoutRows() {
@@ -1140,6 +1150,7 @@ void NodeEditorWindow::Node::LayoutRows() {
   }
   bottomSpacer.SetPos(XMFLOAT2(start_x, y));
   bottomSpacer.SetSize(XMFLOAT2(1, section_gap));
+  pinCacheDirty = true;
 }
 
 void NodeEditorWindow::Node::ComputePinCache() {
