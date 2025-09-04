@@ -1,6 +1,7 @@
 
 #include "stdafx.h"
 #include "NodeEditorWindow.h"
+#include "Editor.h"
 #include "wiImage.h"
 #include "wiScene.h"
 
@@ -975,6 +976,9 @@ void NodeEditorWindow::AddNode() {
   AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
   node->window.SetEnabled(true);
   node->window.SetVisible(true);
+  if (editor) {
+    editor->generalWnd.RefreshTheme();
+  }
 
   // When the node window is closed, queue it for safe removal.
   Node* raw = node.get();
@@ -1034,6 +1038,9 @@ void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& 
   AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
   node->window.SetEnabled(true);
   node->window.SetVisible(true);
+  if (editor) {
+    editor->generalWnd.RefreshTheme();
+  }
 
   Node* raw = node.get();
   node->window.OnClose([this, raw](wi::gui::EventArgs) {
@@ -1069,6 +1076,9 @@ void NodeEditorWindow::Node::AddOutputRow(NodeEditorWindow* owner, const std::st
   row->addButton.OnClick([this, owner, outputName](wi::gui::EventArgs) {
     this->AddConnectionRow(owner, outputName);
     this->LayoutRows();
+    if (owner && owner->editor) {
+      owner->editor->generalWnd.RefreshTheme();
+    }
   });
   window.AddWidget(&row->addButton);
 
@@ -1130,6 +1140,9 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   connectionRows.push_back(std::move(row));
   if (owner) owner->layoutDirty = true;
   pinCacheDirty = true;
+  if (owner && owner->editor) {
+    owner->editor->generalWnd.RefreshTheme();
+  }
   return ret;
 }
 
@@ -1477,6 +1490,9 @@ void NodeEditorWindow::AddTimerNode() {
   AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
   node->window.SetEnabled(true);
   node->window.SetVisible(true);
+  if (editor) {
+    editor->generalWnd.RefreshTheme();
+  }
 
   Node* raw = node.get();
   node->window.OnClose([this, raw](wi::gui::EventArgs) { pendingRemoval.push_back(raw); });
@@ -1525,6 +1541,9 @@ void NodeEditorWindow::AddSequenceNode() {
   AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
   node->window.SetEnabled(true);
   node->window.SetVisible(true);
+  if (editor) {
+    editor->generalWnd.RefreshTheme();
+  }
 
   Node* raw = node.get();
   node->window.OnClose([this, raw](wi::gui::EventArgs) { pendingRemoval.push_back(raw); });

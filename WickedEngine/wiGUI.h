@@ -907,7 +907,7 @@ namespace wi::gui
 		const char* GetWidgetTypeName() const override { return "Window"; }
 
 		// Propagate title text changes to titlebar widgets
-		using Widget::SetText; // keep other overloads visible
+
 		void SetTitle(const std::string& value);
 
 		void SetVisible(bool value) override;
