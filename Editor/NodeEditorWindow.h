@@ -1,17 +1,20 @@
 #pragma once
 class EditorComponent;
 #include <unordered_map>
+#include "wiECS.h"
 
 // Minimal node editor window mirroring Content Browser layout.
 // Functionality will be extended with actual node editing later.
 class NodeEditorWindow : public wi::gui::Window {
 public:
   void Create(EditorComponent *editor);
+  void BuildNodesFromSceneMetadata();
 
   struct Node {
     wi::gui::Window window;
     wi::gui::Label label;
     std::string name;
+    wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
     // I/O visualization data for this node:
     wi::vector<std::string> inputs;   // function names (sinks)
     wi::vector<std::string> outputs;  // event names (sources)
@@ -60,6 +63,7 @@ public:
 
   wi::vector<std::unique_ptr<Node>> nodes;
   wi::gui::Button addNodeButton;
+  wi::gui::Button importFromSceneButton;
   bool recentlyAddedNewNode = false;
 
   void Update(const wi::Canvas &canvas, float dt) override;
@@ -69,12 +73,14 @@ public:
 
 private:
   void AddNode();
+  void AddNodeForEntity(wi::ecs::Entity entity, const std::string& name);
   void RemoveNode(Node* node);
   void RenameNode(Node* node, const std::string& newname);
   wi::vector<Node*> pendingRemoval;
   Node* lastAddedNode = nullptr; // track the last created node for centering
   bool layoutDirty = true; // recompute pin caches only when layout changed
   std::unordered_map<std::string, wi::vector<Node*>> nodeIndex; // fast name->nodes lookup (supports duplicates)
+  std::unordered_map<wi::ecs::Entity, Node*> entityIndex; // entity->node lookup
 
   // Drag & drop state for creating connections by dragging from output pins to input pins
   struct DragState {

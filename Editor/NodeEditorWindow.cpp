@@ -2,6 +2,7 @@
 #include "stdafx.h"
 #include "NodeEditorWindow.h"
 #include "wiImage.h"
+#include "wiScene.h"
 #include <unordered_set>
 #include <unordered_map>
 // clang-format on
@@ -39,9 +40,30 @@ void NodeEditorWindow::Create(EditorComponent *_editor) {
   addNodeButton.OnClick([this](wi::gui::EventArgs) { AddNode(); });
   AddWidget(&addNodeButton, wi::gui::Window::AttachmentOptions::NONE);
 
+  importFromSceneButton.Create("Import Scene I/O");
+  importFromSceneButton.SetLocalizationEnabled(false);
+  importFromSceneButton.SetSize(XMFLOAT2(120, 25));
+  importFromSceneButton.OnClick([this](wi::gui::EventArgs) { BuildNodesFromSceneMetadata(); });
+  AddWidget(&importFromSceneButton, wi::gui::Window::AttachmentOptions::NONE);
+
   // (Zoom slider removed)
 
   SetVisible(false);
+}
+
+void NodeEditorWindow::BuildNodesFromSceneMetadata() {
+  if (!editor) return;
+  wi::scene::Scene& scene = editor->GetCurrentScene();
+  const auto& entities = scene.metadatas.GetEntityArray();
+  for (wi::ecs::Entity e : entities) {
+    // Don't recreate if already added
+    if (entityIndex.find(e) != entityIndex.end()) continue;
+    std::string nm;
+    if (auto* nc = scene.names.GetComponent(e)) nm = nc->name; else nm = std::to_string((uint64_t)e);
+    AddNodeForEntity(e, nm);
+  }
+  recentlyAddedNewNode = true;
+  layoutDirty = true;
 }
 
 void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
@@ -299,6 +321,12 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     addNodeButton.sprites[i].params.corners_rounding[1].radius = radius;
     addNodeButton.sprites[i].params.corners_rounding[2].radius = radius;
     addNodeButton.sprites[i].params.corners_rounding[3].radius = radius;
+
+    importFromSceneButton.sprites[i].params.enableCornerRounding();
+    importFromSceneButton.sprites[i].params.corners_rounding[0].radius = radius;
+    importFromSceneButton.sprites[i].params.corners_rounding[1].radius = radius;
+    importFromSceneButton.sprites[i].params.corners_rounding[2].radius = radius;
+    importFromSceneButton.sprites[i].params.corners_rounding[3].radius = radius;
   }
 
   for (auto &node : nodes) {
@@ -313,6 +341,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
   }
 
   addNodeButton.SetShadowRadius(0);
+  importFromSceneButton.SetShadowRadius(0);
 
   // Drag & drop from output pin to input pin:
   {
@@ -781,6 +810,14 @@ void NodeEditorWindow::ResizeLayout() {
       XMFLOAT2(separator - padding * 2, addNodeButton.GetSize().y));
   addNodeButton.AttachTo(this);
 
+  // Place Import button above Add Node
+  importFromSceneButton.Detach();
+  importFromSceneButton.SetSize(XMFLOAT2(separator - padding * 2, importFromSceneButton.GetSize().y));
+  importFromSceneButton.SetPos(XMFLOAT2(
+      translation.x + padding,
+      addNodeButton.GetPos().y - importFromSceneButton.GetSize().y - padding));
+  importFromSceneButton.AttachTo(this);
+
   // (Zoom slider removed)
 
   if (recentlyAddedNewNode)
@@ -878,6 +915,61 @@ void NodeEditorWindow::AddNode() {
   recentlyAddedNewNode = true;
   lastAddedNode = raw;
   ResizeLayout();
+}
+
+void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& name) {
+  if (ent == wi::ecs::INVALID_ENTITY) return;
+  if (entityIndex.find(ent) != entityIndex.end()) return; // already exists
+
+  auto node = std::make_unique<Node>(name);
+  node->entity = ent;
+  node->window.Create(
+      name,
+      Window::WindowControls::MOVE |
+          Window::WindowControls::CLOSE |
+          Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
+  node->window.SetSize(XMFLOAT2(280, 100));
+
+  node->label.Create(name);
+  node->label.SetText(name);
+  node->label.SetPos(XMFLOAT2(4, 4));
+  node->label.SetSize(XMFLOAT2(112, 20));
+  node->window.AddWidget(&node->label);
+
+  // Seed I/O sets (can be customized by Lua later)
+  node->outputs.push_back("OnStart");
+  node->inputs.push_back("Enable");
+  node->inputs.push_back("Disable");
+  for (auto& outname : node->outputs) node->AddOutputRow(this, outname);
+  for (auto& inname : node->inputs) {
+    auto lbl = std::make_unique<wi::gui::Label>();
+    lbl->Create(inname);
+    lbl->SetLocalizationEnabled(false);
+    lbl->SetShadowRadius(0);
+    lbl->SetText(inname);
+    node->window.AddWidget(lbl.get());
+    node->inputLabels.push_back(std::move(lbl));
+  }
+  node->LayoutRows();
+
+  // Register the node window to render/update
+  AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
+  node->window.SetEnabled(true);
+  node->window.SetVisible(true);
+
+  Node* raw = node.get();
+  node->window.OnClose([this, raw](wi::gui::EventArgs) {
+    pendingRemoval.push_back(raw);
+  });
+
+  entityIndex[ent] = raw;
+  nodes.push_back(std::move(node));
+  nodeIndex[raw->name].push_back(raw);
+  // Center the newly added node like AddNode()
+  recentlyAddedNewNode = true;
+  lastAddedNode = raw;
+  ResizeLayout();
+  layoutDirty = true;
 }
 
 // ----- Node UI helpers -----
@@ -1087,6 +1179,12 @@ void NodeEditorWindow::RemoveNode(Node* node) {
       if (*vit == node) vit = vec.erase(vit); else ++vit;
     }
     if (vec.empty()) nodeIndex.erase(itidx);
+  }
+  if (node->entity != wi::ecs::INVALID_ENTITY) {
+    auto itent = entityIndex.find(node->entity);
+    if (itent != entityIndex.end() && itent->second == node) {
+      entityIndex.erase(itent);
+    }
   }
 
   // Erase the node from our list (unique_ptr will clean up)
