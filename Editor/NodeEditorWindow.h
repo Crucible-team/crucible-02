@@ -1,5 +1,6 @@
 #pragma once
 class EditorComponent;
+#include <unordered_map>
 
 // Minimal node editor window mirroring Content Browser layout.
 // Functionality will be extended with actual node editing later.
@@ -69,9 +70,11 @@ public:
 private:
   void AddNode();
   void RemoveNode(Node* node);
+  void RenameNode(Node* node, const std::string& newname);
   wi::vector<Node*> pendingRemoval;
   Node* lastAddedNode = nullptr; // track the last created node for centering
   bool layoutDirty = true; // recompute pin caches only when layout changed
+  std::unordered_map<std::string, wi::vector<Node*>> nodeIndex; // fast name->nodes lookup (supports duplicates)
 
   // Drag & drop state for creating connections by dragging from output pins to input pins
   struct DragState {

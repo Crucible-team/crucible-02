@@ -170,31 +170,15 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           continue;
         }
 
-        // Deduplication key: outputName + target + input + param + delay
-        std::string key;
-        key.reserve(crow->outputName.size() + target_text.size() + 64);
-        key.append(crow->outputName).push_back('\n');
-        key.append(target_text).push_back('\n');
-        key.append(GetFieldText(crow->input)).push_back('\n');
-        key.append(GetFieldText(crow->param)).push_back('\n');
-        key.append(GetFieldText(crow->delay));
-        if (seen_keys.find(key) != seen_keys.end()) {
-          continue; // skip duplicates
-        }
-        seen_keys.insert(key);
+        // Deduplication will be performed per-target node below (key includes target pointer)
 
+        // Determine target nodes by name via index (supports duplicates)
         wi::vector<const Node*> targets;
-        for (const auto& other : nodes) {
-          if (other.get() == n.get()) continue;
-          if (other->name == target_text || other->label.GetText() == target_text) {
-            targets.push_back(other.get());
-          }
+        if (auto itnode = nodeIndex.find(target_text); itnode != nodeIndex.end()) {
+          for (auto* cand : itnode->second) if (cand != n.get()) targets.push_back(cand);
         }
-        if (targets.empty()) {
-          continue; // no matching targets
-        }
+        if (targets.empty()) continue;
 
-        // Determine target input label by input field
         const std::string input_name = GetFieldText(crow->input);
         for (const Node* target_node : targets) {
           const wi::gui::Label* target_input_label = nullptr;
@@ -204,10 +188,6 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
               if (ilbl_uptr->GetText() == input_name) { target_input_label = ilbl_uptr.get(); break; }
             }
           }
-          if (!target_input_label && !target_node->inputLabels.empty()) {
-            target_input_label = target_node->inputLabels.front().get();
-          }
-
           float ex;
           float ey;
           if (target_input_label) {
@@ -258,6 +238,7 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
             }
           }
         }
+        
       }
     }
 
@@ -642,13 +623,12 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           const auto& wnd = n->window;
           for (auto& crow_uptr : n->connectionRows) {
             auto* crow = crow_uptr.get();
-            // Determine targets
+            // Determine targets by index (support duplicates)
             std::string target_text = crow->target.GetText();
             if (target_text == "!self" || target_text.empty()) continue;
             wi::vector<const Node*> targets;
-            for (const auto& other : nodes) {
-              if (other.get() == n.get()) continue;
-              if (other->name == target_text || other->label.GetText() == target_text) targets.push_back(other.get());
+            if (auto itnode = nodeIndex.find(target_text); itnode != nodeIndex.end()) {
+              for (auto* cand : itnode->second) if (cand != n.get()) targets.push_back(cand);
             }
             if (targets.empty()) continue;
 
@@ -893,6 +873,8 @@ void NodeEditorWindow::AddNode() {
   });
 
   nodes.push_back(std::move(node));
+  // index by name for fast lookup (support duplicates)
+  nodeIndex[nodes.back()->name].push_back(nodes.back().get());
   recentlyAddedNewNode = true;
   lastAddedNode = raw;
   ResizeLayout();
@@ -1097,6 +1079,16 @@ void NodeEditorWindow::RemoveNode(Node* node) {
   node->window.Detach();
   node->window.RemoveWidgets();
 
+  // remove from index
+  auto itidx = nodeIndex.find(node->name);
+  if (itidx != nodeIndex.end()) {
+    auto& vec = itidx->second;
+    for (auto vit = vec.begin(); vit != vec.end(); ) {
+      if (*vit == node) vit = vec.erase(vit); else ++vit;
+    }
+    if (vec.empty()) nodeIndex.erase(itidx);
+  }
+
   // Erase the node from our list (unique_ptr will clean up)
   for (auto it = nodes.begin(); it != nodes.end(); ++it) {
     if (it->get() == node) {
@@ -1110,6 +1102,22 @@ void NodeEditorWindow::RemoveNode(Node* node) {
   for (int i = (int)hubs.size() - 1; i >= 0; --i) {
     DeleteHubIfUnreferenced(hubs[i].id);
   }
+}
+
+void NodeEditorWindow::RenameNode(Node* node, const std::string& newname) {
+  if (!node) return;
+  // erase old mapping if it points to this node
+  auto it = nodeIndex.find(node->name);
+  if (it != nodeIndex.end()) {
+    auto& vec = it->second;
+    for (auto vit = vec.begin(); vit != vec.end(); ) {
+      if (*vit == node) vit = vec.erase(vit); else ++vit;
+    }
+    if (vec.empty()) nodeIndex.erase(it);
+  }
+  node->name = newname;
+  node->label.SetText(newname);
+  nodeIndex[newname].push_back(node);
 }
 
 // (Zoom functionality removed)
