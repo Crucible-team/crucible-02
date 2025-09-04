@@ -60,10 +60,12 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
     for (auto& n : nodes) {
       const auto& wnd = n->window;
       const float pinR = 4.0f;
-      // Inputs on left
-      for (auto& il : n->inputLabels) {
-        float cx = wnd.translation.x + 6.0f; // near left edge
-        float cy = il->translation.y + il->scale.y * 0.5f;
+      // Inputs on left (use cached positions to avoid transient jitter)
+      for (size_t i = 0; i < n->inputLabels.size(); ++i) {
+        auto& il = n->inputLabels[i];
+        XMFLOAT2 pinpos = (i < n->cachedInputPins.size()) ? n->cachedInputPins[i] : XMFLOAT2(il->translation.x - 6.0f, il->translation.y + il->scale.y * 0.5f);
+        float cx = pinpos.x; // just left to the label
+        float cy = pinpos.y;
         bool isHover = drag.active && drag.hoverNode == n.get() && drag.hoverInput == il.get();
         wi::image::Params pin;
         pin.pos = XMFLOAT3(cx, cy, 0);
@@ -82,7 +84,7 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           wi::image::Draw(nullptr, ring, cmd);
         }
       }
-      // Outputs on right: one pin per output header row, with self-target highlight
+      // Outputs on right: one pin per output header row, with self-target highlight (anchor to header widgets)
       for (auto& orow : n->outputRows) {
         // Check if any connection for this output targets self
         bool self_target = false;
@@ -101,8 +103,21 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           wi::image::Draw(nullptr, bg, cmd);
         }
 
-        float cx = wnd.translation.x + wnd.scale.x - 6.0f;
-        float cy = orow->label.translation.y + orow->label.scale.y * 0.5f;
+        // Use cached output pin position when available
+        XMFLOAT2 pinpos = {};
+        bool foundCache = false;
+        for (auto& co : n->cachedOutputPins) {
+          if (co.row == orow.get()) { pinpos = co.pos; foundCache = true; break; }
+        }
+        float cx, cy;
+        if (foundCache) {
+          cx = pinpos.x; cy = pinpos.y;
+        } else {
+          float headerRight = std::max(orow->label.translation.x + orow->label.scale.x,
+                                       orow->addButton.translation.x + orow->addButton.scale.x);
+          cx = headerRight + 6.0f;
+          cy = orow->label.translation.y + orow->label.scale.y * 0.5f;
+        }
         bool isSrc = drag.active && drag.srcNode == n.get() && drag.srcOutput == orow.get();
         wi::image::Params pin;
         pin.pos = XMFLOAT3(cx, cy, 0);
@@ -135,9 +150,18 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
         }
         if (!src_orow) continue;
 
-        // Source pin position (right side of source node header row)
-        const float sx = wnd.translation.x + wnd.scale.x - 6.0f;
-        const float sy = src_orow->label.translation.y + src_orow->label.scale.y * 0.5f;
+        // Source pin position: use cached output pin position when possible
+        float sx, sy;
+        bool foundCache = false;
+        for (auto& co : n->cachedOutputPins) {
+          if (co.row == src_orow) { sx = co.pos.x; sy = co.pos.y; foundCache = true; break; }
+        }
+        if (!foundCache) {
+          const float headerRight = std::max(src_orow->label.translation.x + src_orow->label.scale.x,
+                                             src_orow->addButton.translation.x + src_orow->addButton.scale.x);
+          sx = headerRight + 6.0f;
+          sy = src_orow->label.translation.y + src_orow->label.scale.y * 0.5f;
+        }
 
         // Determine target nodes by target field (can be multiple)
         std::string target_text = GetFieldText(crow->target);
@@ -187,8 +211,18 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           float ex;
           float ey;
           if (target_input_label) {
-            ex = target_node->window.translation.x + 6.0f;
-            ey = target_input_label->translation.y + target_input_label->scale.y * 0.5f;
+            // use cached input pin position for target node when available
+            bool foundTargetCache = false;
+            for (size_t i = 0; i < target_node->inputLabels.size(); ++i) {
+              if (target_node->inputLabels[i].get() == target_input_label) {
+                if (i < target_node->cachedInputPins.size()) { ex = target_node->cachedInputPins[i].x; ey = target_node->cachedInputPins[i].y; foundTargetCache = true; }
+                break;
+              }
+            }
+            if (!foundTargetCache) {
+              ex = target_node->window.translation.x + 6.0f;
+              ey = target_input_label->translation.y + target_input_label->scale.y * 0.5f;
+            }
           } else {
             // Fallback to center-left of target window
             ex = target_node->window.translation.x + 6.0f;
@@ -227,10 +261,28 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
       }
     }
 
-    // Draw preview wire while dragging
+    // Draw preview wire while dragging (compute live source position to avoid 1-frame mismatch)
     if (drag.active && drag.srcNode && drag.srcOutput) {
-      float sx = drag.srcPos.x;
-      float sy = drag.srcPos.y;
+      float sx = 0.0f;
+      float sy = 0.0f;
+      if (drag.fromAnchor) {
+        // If dragging from an anchor, use the hub's current position
+        if (anchorRight.active && anchorRight.conn && anchorRight.index >= 0 && anchorRight.index < (int)anchorRight.conn->anchorHubIds.size()) {
+          const auto* hub = GetHub(anchorRight.conn->anchorHubIds[anchorRight.index]);
+          if (hub) {
+            sx = scrollable_area.translation.x + hub->pos.x;
+            sy = scrollable_area.translation.y + hub->pos.y;
+          }
+        }
+      }
+      if (sx == 0.0f && sy == 0.0f) {
+        // Fallback to current output pin position
+        float headerRight = std::max(drag.srcOutput->label.translation.x + drag.srcOutput->label.scale.x,
+                                     drag.srcOutput->addButton.translation.x + drag.srcOutput->addButton.scale.x);
+        sx = headerRight + 6.0f;
+        sy = drag.srcOutput->label.translation.y + drag.srcOutput->label.scale.y * 0.5f;
+      }
+
       float ex = drag.cursor.x;
       float ey = drag.cursor.y;
       // snap preview end to hovered input pin if any
@@ -311,6 +363,63 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
       }
     }
 
+    // Begin drag from input pin to move existing connection (left button)
+    if (!drag.active && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT)) {
+      for (auto& n_target : nodes) {
+        float ix = n_target->window.translation.x + 6.0f;
+        for (auto& il : n_target->inputLabels) {
+          float iy = il->translation.y + il->scale.y * 0.5f;
+          float dx = p.x - ix;
+          float dy = p.y - iy;
+          if (dx * dx + dy * dy <= pinDetectR * pinDetectR) {
+            // find a connection that targets this input
+            Node::ConnectionUI* found = nullptr;
+            Node* owner = nullptr;
+            const std::string target_name = n_target->name;
+            const std::string input_name = il->GetText();
+            // prefer selectedConnection if matches
+            if (selectedConnection && GetFieldText(selectedConnection->target) == target_name && GetFieldText(selectedConnection->input) == input_name) {
+              // find owner
+              for (auto& nsrc : nodes) {
+                for (auto& cr : nsrc->connectionRows) if (cr.get() == selectedConnection) { owner = nsrc.get(); break; }
+                if (owner) break;
+              }
+              found = selectedConnection;
+            }
+            if (!found) {
+              for (auto& nsrc : nodes) {
+                for (auto& cr : nsrc->connectionRows) {
+                  if (GetFieldText(cr->target) == target_name && GetFieldText(cr->input) == input_name) { found = cr.get(); owner = nsrc.get(); break; }
+                }
+                if (found) break;
+              }
+            }
+            if (found && owner) {
+              const Node::OutputUI* src_orow = owner->FindOutputRow(found->outputName);
+              if (src_orow) {
+                float sx = owner->window.translation.x + owner->window.scale.x - 6.0f;
+                float sy = src_orow->label.translation.y + src_orow->label.scale.y * 0.5f;
+                drag.active = true;
+                drag.rightButton = false;
+                drag.fromAnchor = false;
+                drag.srcNode = owner;
+                drag.srcOutput = const_cast<Node::OutputUI*>(src_orow);
+                drag.srcPos = XMFLOAT2(sx, sy);
+                drag.cursor = p;
+                drag.hoverNode = nullptr;
+                drag.hoverInput = nullptr;
+                drag.movingConnection = found;
+                drag.movingOwner = owner;
+                selectedConnection = found;
+              }
+            }
+            break;
+          }
+        }
+        if (drag.active) break;
+      }
+    }
+
     // Update drag
     if (drag.active) {
       drag.cursor = p;
@@ -337,11 +446,10 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     // Drop
     if (drag.active && ((drag.rightButton && !wi::input::Down(wi::input::MOUSE_BUTTON_RIGHT)) || (!drag.rightButton && !wi::input::Down(wi::input::MOUSE_BUTTON_LEFT)))) {
       if (drag.hoverNode && drag.hoverInput && drag.srcNode && drag.srcOutput) {
-        // Check for existing identical connection (output, target, input, param, delay)
         const std::string newTarget = drag.hoverNode->name;
         const std::string newInput = drag.hoverInput->GetText();
-        const std::string newParam = "";
-        const std::string newDelay = "0.0";
+        const std::string newParam = GetFieldText(drag.movingConnection ? drag.movingConnection->param : *(new wi::gui::TextInputField()));
+        const std::string newDelay = GetFieldText(drag.movingConnection ? drag.movingConnection->delay : *(new wi::gui::TextInputField()));
         bool exists = false;
         for (auto& cr : drag.srcNode->connectionRows) {
           if (cr->outputName != drag.srcOutput->name) continue;
@@ -351,18 +459,34 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           if (GetFieldText(cr->delay) != newDelay) continue;
           exists = true; selectedConnection = cr.get(); break;
         }
-        if (!exists) {
-          // Create a connection row under the dragged output
+        if (drag.movingConnection) {
+          // update existing connection instead of creating a new one
+          if (!exists) {
+            drag.movingConnection->target.SetValue(newTarget);
+            drag.movingConnection->input.SetValue(newInput);
+            // keep original param/delay
+            drag.movingOwner->LayoutRows();
+            selectedConnection = drag.movingConnection;
+          }
+          layoutDirty = true;
+        } else if (!exists) {
           auto* crow = drag.srcNode->AddConnectionRow(this, drag.srcOutput->name);
           if (crow) {
             crow->target.SetValue(newTarget);
             crow->input.SetValue(newInput);
-            crow->param.SetValue(newParam);
-            crow->delay.SetValue(newDelay);
+            crow->param.SetValue("");
+            crow->delay.SetValue("0.0");
             selectedConnection = crow;
             drag.srcNode->LayoutRows();
           }
+          layoutDirty = true;
         }
+      }
+      else if (drag.movingConnection && drag.movingOwner) {
+        // dropped to nowhere: delete the moving connection
+        drag.movingOwner->RemoveConnectionRow(this, drag.movingConnection);
+        selectedConnection = nullptr;
+        layoutDirty = true;
       }
       drag = DragState{}; // reset
     }
@@ -532,7 +656,9 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             const Node::OutputUI* src_orow = nullptr;
             for (const auto& orow_uptr : n->outputRows) if (orow_uptr->name == crow->outputName) { src_orow = orow_uptr.get(); break; }
             if (!src_orow) continue;
-            XMFLOAT2 astart(wnd.translation.x + wnd.scale.x - 6.0f, src_orow->label.translation.y + src_orow->label.scale.y * 0.5f);
+            float headerRight = std::max(src_orow->label.translation.x + src_orow->label.scale.x,
+                                         src_orow->addButton.translation.x + src_orow->addButton.scale.x);
+            XMFLOAT2 astart(headerRight + 6.0f, src_orow->label.translation.y + src_orow->label.scale.y * 0.5f);
 
             auto testSegment = [&](const XMFLOAT2& A, const XMFLOAT2& B) {
               // simple distance to line segment squared
@@ -547,7 +673,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             // through anchors (shared hubs)
             if (!crow->anchorHubIds.empty()) {
               for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
-                auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
+                const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
                 XMFLOAT2 ap(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y);
                 if (testSegment(astart, ap) <= thr2) { hit = crow; break; }
                 astart = ap;
@@ -569,6 +695,26 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           if (hit) break;
         }
         if (!hit) selectedConnection = nullptr;
+      }
+      // Delete selected connection with Delete key (skip when editing its fields)
+      if (selectedConnection && wi::input::Press(wi::input::KEYBOARD_BUTTON_DELETE)) {
+        bool anyActive = false;
+        if (selectedConnection->target.GetState() == wi::gui::ACTIVE) anyActive = true;
+        if (selectedConnection->input.GetState() == wi::gui::ACTIVE) anyActive = true;
+        if (selectedConnection->param.GetState() == wi::gui::ACTIVE) anyActive = true;
+        if (selectedConnection->delay.GetState() == wi::gui::ACTIVE) anyActive = true;
+        if (!anyActive) {
+          for (auto& n : nodes) {
+            for (auto& cr : n->connectionRows) {
+              if (cr.get() == selectedConnection) {
+                n->RemoveConnectionRow(this, selectedConnection);
+                selectedConnection = nullptr;
+                break;
+              }
+            }
+            if (!selectedConnection) break;
+          }
+        }
       }
 
       // Add anchor on right click when a wire is selected and not clicking an anchor
@@ -616,6 +762,11 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     }
   }
 
+  // Recompute pin caches after all updates/layouts for this frame
+  for (auto& n : nodes) {
+    n->ComputePinCache();
+  }
+
   // Process any node removals queued during child updates (e.g., close button)
   if (!pendingRemoval.empty()) {
     // Copy to avoid side effects while removing
@@ -624,6 +775,16 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     for (auto* n : toRemove) {
       RemoveNode(n);
     }
+  }
+
+  // Ensure child node windows finalize their layout after any connection/UI changes this frame,
+  // then snapshot stable pin positions to avoid transient jitter during render.
+  if (layoutDirty) {
+    for (auto& n : nodes) {
+      n->window.Update(canvas, 0);
+      n->ComputePinCache();
+    }
+    layoutDirty = false;
   }
 }
 
@@ -714,6 +875,7 @@ void NodeEditorWindow::AddNode() {
     node->inputLabels.push_back(std::move(lbl));
   }
   node->LayoutRows();
+  layoutDirty = true;
  
   // Register the node window as a child widget so it can be rendered,
   // updated and receive input events (such as moving and interacting
@@ -757,6 +919,7 @@ void NodeEditorWindow::Node::AddOutputRow(NodeEditorWindow* owner, const std::st
   window.AddWidget(&row->addButton);
 
   outputRows.push_back(std::move(row));
+  if (owner) owner->layoutDirty = true;
 }
 
 NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName) {
@@ -805,6 +968,7 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
 
   ConnectionUI* ret = row.get();
   connectionRows.push_back(std::move(row));
+  if (owner) owner->layoutDirty = true;
   return ret;
 }
 
@@ -825,9 +989,15 @@ void NodeEditorWindow::Node::RemoveConnectionRow(NodeEditorWindow* owner, Connec
   row->removeButton.Detach();
 
   // Erase from list
+  // Save hubs to clean up after erasing
+  auto hubs_to_check = row->anchorHubIds;
   for (auto it = connectionRows.begin(); it != connectionRows.end(); ++it) {
     if (it->get() == row) { connectionRows.erase(it); break; }
   }
+  for (auto hid : hubs_to_check) {
+    owner->DeleteHubIfUnreferenced(hid);
+  }
+  if (owner) owner->layoutDirty = true;
 }
 
 void NodeEditorWindow::Node::LayoutRows() {
@@ -896,6 +1066,27 @@ void NodeEditorWindow::Node::LayoutRows() {
   }
   bottomSpacer.SetPos(XMFLOAT2(start_x, y));
   bottomSpacer.SetSize(XMFLOAT2(1, section_gap));
+}
+
+void NodeEditorWindow::Node::ComputePinCache() {
+  // Inputs: left of input labels
+  cachedInputPins.clear();
+  cachedInputPins.reserve(inputLabels.size());
+  for (auto& il : inputLabels) {
+    float cx = il->translation.x - 6.0f;
+    float cy = il->translation.y + il->scale.y * 0.5f;
+    cachedInputPins.push_back(XMFLOAT2(cx, cy));
+  }
+  // Outputs: right of max(label.right, addButton.right)
+  cachedOutputPins.clear();
+  cachedOutputPins.reserve(outputRows.size());
+  for (auto& orow : outputRows) {
+    float headerRight = std::max(orow->label.translation.x + orow->label.scale.x,
+                                 orow->addButton.translation.x + orow->addButton.scale.x);
+    float cx = headerRight + 6.0f;
+    float cy = orow->label.translation.y + orow->label.scale.y * 0.5f;
+    cachedOutputPins.push_back({ orow.get(), XMFLOAT2(cx, cy) });
+  }
 }
 
 void NodeEditorWindow::RemoveNode(Node* node) {

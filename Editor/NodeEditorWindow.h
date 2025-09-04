@@ -35,10 +35,16 @@ public:
     wi::vector<std::unique_ptr<wi::gui::Label>> inputLabels; // visual list of inputs
     wi::gui::Label bottomSpacer; // pushes window bottom to add padding
 
+    // Cached pin positions (in screen space) to avoid one-frame jitter
+    wi::vector<XMFLOAT2> cachedInputPins; // one-to-one with inputLabels
+    struct CachedOutputPin { OutputUI* row = nullptr; XMFLOAT2 pos = XMFLOAT2(0,0); };
+    wi::vector<CachedOutputPin> cachedOutputPins; // one per outputRows
+
     void AddOutputRow(NodeEditorWindow* owner, const std::string& outputName);
     ConnectionUI* AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName);
     void RemoveConnectionRow(NodeEditorWindow* owner, ConnectionUI* row);
     void LayoutRows();
+    void ComputePinCache();
     OutputUI* FindOutputRow(const std::string& outputName) {
       for (auto& r : outputRows) if (r->name == outputName) return r.get();
       return nullptr;
@@ -65,6 +71,7 @@ private:
   void RemoveNode(Node* node);
   wi::vector<Node*> pendingRemoval;
   Node* lastAddedNode = nullptr; // track the last created node for centering
+  bool layoutDirty = true; // recompute pin caches only when layout changed
 
   // Drag & drop state for creating connections by dragging from output pins to input pins
   struct DragState {
@@ -77,6 +84,9 @@ private:
     XMFLOAT2 cursor = XMFLOAT2(0, 0);
     Node* hoverNode = nullptr;
     const wi::gui::Label* hoverInput = nullptr;
+    // moving an existing connection (dragging from input pin)
+    Node::ConnectionUI* movingConnection = nullptr;
+    Node* movingOwner = nullptr;
   } drag;
 
   // Wire selection + anchor dragging
@@ -106,4 +116,5 @@ private:
   const RerouteHub* GetHub(uint32_t id) const;
   uint32_t CreateHub(const XMFLOAT2& local);
   void DeleteHubIfUnreferenced(uint32_t id);
+
 };
