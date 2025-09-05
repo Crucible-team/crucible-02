@@ -681,6 +681,35 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
       }
     }
 
+    // Right-click on output pin: remove all connections from that output
+    if (!drag.active && wi::input::Press(wi::input::MOUSE_BUTTON_RIGHT)) {
+      bool removed_any = false;
+      for (auto& n : nodes) {
+        const float cx_base = n->window.translation.x + n->window.scale.x - 6.0f;
+        for (auto& orow : n->outputRows) {
+          float cy = orow->label.translation.y + orow->label.scale.y * 0.5f;
+          float dx = p.x - cx_base;
+          float dy = p.y - cy;
+          if (dx * dx + dy * dy <= pinDetectR * pinDetectR) {
+            // collect and remove
+            wi::vector<Node::ConnectionUI*> toremove;
+            for (auto& cr : n->connectionRows) if (cr->outputName == orow->name) toremove.push_back(cr.get());
+            for (auto* r : toremove) {
+              if (selectedConnection == r) selectedConnection = nullptr;
+              n->RemoveConnectionRow(this, r);
+            }
+            layoutDirty = true;
+            removed_any = true;
+            break;
+          }
+        }
+        if (removed_any) break;
+      }
+      if (removed_any) {
+        // consume this press; avoid starting other right-click ops this frame
+      }
+    }
+
     // Begin drag from input pin to move existing connection (left button)
     if (!drag.active && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT)) {
       for (auto& n_target : nodes) {
@@ -765,8 +794,19 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
       if (drag.hoverNode && drag.hoverInput && drag.srcNode && drag.srcOutput) {
         const std::string newTarget = drag.hoverNode->name;
         const std::string newInput = drag.hoverInput->GetText();
-        const std::string newParam = GetFieldText(drag.movingConnection ? drag.movingConnection->param : *(new wi::gui::TextInputField()));
-        const std::string newDelay = GetFieldText(drag.movingConnection ? drag.movingConnection->delay : *(new wi::gui::TextInputField()));
+        std::string newParam;
+        std::string newDelay;
+        if (drag.movingConnection)
+        {
+          newParam = GetFieldText(drag.movingConnection->param);
+          newDelay = GetFieldText(drag.movingConnection->delay);
+        }
+        else
+        {
+          // Defaults for a brand new connection row
+          newParam = "";
+          newDelay = "0.0";
+        }
         bool exists = false;
         for (auto& cr : drag.srcNode->connectionRows) {
           if (cr->outputName != drag.srcOutput->name) continue;
@@ -776,6 +816,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           if (GetFieldText(cr->delay) != newDelay) continue;
           exists = true; selectedConnection = cr.get(); break;
         }
+        Node::ConnectionUI* baseRow = nullptr;
         if (drag.movingConnection) {
           // update existing connection instead of creating a new one
           if (!exists) {
@@ -784,6 +825,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             drag.movingOwner->LayoutRows();
             selectedConnection = drag.movingConnection;
           }
+          baseRow = drag.movingConnection;
           layoutDirty = true;
         } else if (!exists) {
           auto* crow = drag.srcNode->AddConnectionRow(this, drag.srcOutput->name);
@@ -795,7 +837,64 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             selectedConnection = crow;
             drag.srcNode->LayoutRows();
           }
+          baseRow = selectedConnection;
           layoutDirty = true;
+        } else {
+          // exists already
+          baseRow = selectedConnection;
+        }
+
+        // If this connection was initiated from a shared hub, propagate to all owners of that hub
+        if (drag.fromAnchor && anchorRight.conn && anchorRight.index >= 0 && anchorRight.index < (int)anchorRight.conn->anchorHubIds.size()) {
+          uint32_t groupHub = anchorRight.conn->anchorHubIds[anchorRight.index];
+          const std::string outname = anchorRight.conn->outputName;
+          // Ensure the base row on the source owner is bound to the shared hub
+          if (baseRow) {
+            bool hasHub = false;
+            for (auto hid : baseRow->anchorHubIds) { if (hid == groupHub) { hasHub = true; break; } }
+            if (!hasHub) { baseRow->anchorHubIds.push_back(groupHub); if (auto* h = GetHub(groupHub)) { h->refcount++; } }
+          }
+          for (auto& n2 : nodes) {
+            Node* owner2 = n2.get();
+            if (owner2 == drag.srcNode) continue; // source handled as baseRow above
+            bool owner_has_hub = false;
+            for (auto& cr2 : owner2->connectionRows) {
+              if (cr2->outputName != outname) continue;
+              for (auto hid : cr2->anchorHubIds) { if (hid == groupHub) { owner_has_hub = true; break; } }
+              if (owner_has_hub) break;
+            }
+            if (!owner_has_hub) continue;
+            // Avoid duplicate connection rows
+            bool exists2 = false;
+            Node::ConnectionUI* row2 = nullptr;
+            for (auto& crx : owner2->connectionRows) {
+              if (crx->outputName != outname) continue;
+              if (GetFieldText(crx->target) != newTarget) continue;
+              if (GetFieldText(crx->input) != newInput) continue;
+              if (GetFieldText(crx->param) != newParam) continue;
+              if (GetFieldText(crx->delay) != newDelay) continue;
+              exists2 = true; row2 = crx.get(); break;
+            }
+            if (!exists2) {
+              auto* crow2 = owner2->AddConnectionRow(this, outname);
+              if (crow2) {
+                crow2->target.SetValue(newTarget);
+                crow2->input.SetValue(newInput);
+                crow2->param.SetValue(newParam);
+                crow2->delay.SetValue(newDelay);
+                // Bind to shared hub
+                crow2->anchorHubIds.push_back(groupHub);
+                if (auto* h = GetHub(groupHub)) { h->refcount++; }
+                owner2->LayoutRows();
+              }
+              layoutDirty = true;
+            } else if (row2) {
+              // Ensure existing row is bound to shared hub
+              bool hasHub2 = false;
+              for (auto hid : row2->anchorHubIds) { if (hid == groupHub) { hasHub2 = true; break; } }
+              if (!hasHub2) { row2->anchorHubIds.push_back(groupHub); if (auto* h = GetHub(groupHub)) { h->refcount++; } }
+            }
+          }
         }
       }
       else if (drag.movingConnection && drag.movingOwner) {
@@ -1026,20 +1125,15 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           if (hub) hub->pos = local;
         }
         if (!wi::input::Down(wi::input::MOUSE_BUTTON_LEFT)) {
-          // Left release: attempt merge with other anchors of same node+output
-      if (anchorDrag.conn) {
-        const std::string outname = anchorDrag.conn->outputName;
-        auto* myhub = GetHub(anchorDrag.conn->anchorHubIds[anchorDrag.index]);
-        XMFLOAT2 my = myhub ? myhub->pos : XMFLOAT2(0,0);
-            Node* owner = nullptr;
-            for (auto& n : nodes) {
-              for (auto& cr : n->connectionRows) if (cr.get() == anchorDrag.conn) { owner = n.get(); break; }
-              if (owner) break;
-            }
-            if (owner) {
-              const float mergeThr2 = 10.0f * 10.0f;
-              bool merged = false;
-              for (auto& cr2_uptr : owner->connectionRows) {
+          // Left release: attempt merge with other anchors of same output across all nodes (manual combine)
+          if (anchorDrag.conn) {
+            const std::string outname = anchorDrag.conn->outputName;
+            auto* myhub = GetHub(anchorDrag.conn->anchorHubIds[anchorDrag.index]);
+            XMFLOAT2 my = myhub ? myhub->pos : XMFLOAT2(0,0);
+            const float mergeThr2 = 10.0f * 10.0f;
+            bool merged = false;
+            for (auto& n2 : nodes) {
+              for (auto& cr2_uptr : n2->connectionRows) {
                 auto* cr2 = cr2_uptr.get();
                 if (cr2 == anchorDrag.conn) continue;
                 if (cr2->outputName != outname) continue;
@@ -1060,6 +1154,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
                 }
                 if (merged) break;
               }
+              if (merged) break;
             }
           }
           anchorDrag = {};
@@ -1305,8 +1400,8 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
     }
   }
 
-  // Unify duplicate connections: ensure only one representative per (output,target,input,param,delay)
-  // and redirect selection to representative. Also unify anchors to representative hubs.
+  // Unify duplicate connections per node only (no cross-node auto combine):
+  // Ensure one representative per (output,target,input,param,delay) within a node and unify hubs accordingly.
   for (auto& n : nodes) {
     std::unordered_map<std::string, Node::ConnectionUI*> rep;
     for (auto& cr_uptr : n->connectionRows) {
@@ -1318,14 +1413,11 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
       } else {
         Node::ConnectionUI* master = it->second;
         if (selectedConnection == cr) selectedConnection = master;
-        // unify hubs: bind duplicate to master's hub chain
         if (cr->anchorHubIds != master->anchorHubIds) {
-          // decrement old hubs
           for (auto hid : cr->anchorHubIds) {
             if (auto* h = GetHub(hid)) { if (h->refcount > 0) h->refcount--; }
             DeleteHubIfUnreferenced(hid);
           }
-          // assign new hubs and increment refs
           cr->anchorHubIds = master->anchorHubIds;
           for (auto hid : cr->anchorHubIds) {
             if (auto* h = GetHub(hid)) { h->refcount++; }
