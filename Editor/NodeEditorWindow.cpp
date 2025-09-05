@@ -358,7 +358,7 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           } else {
             T0 = XMFLOAT2(+endpointBias, 0);
           }
-          T1 = XMFLOAT2(-endpointBias, 0);
+          T1 = XMFLOAT2(+endpointBias, 0);
           float seglen = len(sub(P1, P0));
           float maxHandle = std::max(minHandle, seglen * clampK);
           float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
@@ -410,8 +410,8 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
       XMFLOAT2 T0(+endpointBias, 0);
       XMFLOAT2 T1;
       if (drag.hoverNode && drag.hoverInput) {
-        // Approach target/input horizontally from the right into the node
-        T1 = XMFLOAT2(-endpointBias, 0);
+        // Approach target/input horizontally from the left (opposite)
+        T1 = XMFLOAT2(+endpointBias, 0);
       } else {
         // free-end towards cursor: aim along delta, clamp to sensible length
         XMFLOAT2 delta(P1.x - P0.x, P1.y - P0.y);
@@ -961,7 +961,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
               } else {
                 T0 = XMFLOAT2(+endpointBias2, 0);
               }
-              T1 = XMFLOAT2(-endpointBias2, 0);
+              T1 = XMFLOAT2(+endpointBias2, 0);
               if (hit_segment(P0, P1, T0, T1)) { hit = crow; break; }
             }
             if (hit) { selectedConnection = hit; break; }
@@ -1744,6 +1744,7 @@ void NodeEditorWindow::AddTimerNode() {
     lbl->SetText(inname);
     node->window.AddWidget(lbl.get());
     node->inputLabels.push_back(std::move(lbl));
+    node->inputIndex[inname] = node->inputLabels.size() - 1;
   }
   node->LayoutRows();
 
