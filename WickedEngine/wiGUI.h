@@ -1062,6 +1062,18 @@ namespace wi::gui
 		const wi::Canvas& canvas,
 		wi::graphics::CommandList cmd);
 
+	// Variant: draw a Bezier wire using explicit endpoint tangents (Hermite -> Bezier conversion).
+	// Tangents are in screen space units. Magnitudes are used as control handle lengths.
+	void DrawWireBezierStripTangent(
+		const XMFLOAT2& from,
+		const XMFLOAT2& to,
+		const XMFLOAT2& tanFrom,
+		const XMFLOAT2& tanTo,
+		float thickness,
+		const XMFLOAT4& color,
+		const wi::Canvas& canvas,
+		wi::graphics::CommandList cmd);
+
 }
 
 template<>

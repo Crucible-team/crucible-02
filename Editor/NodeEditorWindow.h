@@ -88,6 +88,11 @@ public:
   void OnEntityRenamed(wi::ecs::Entity entity, const std::string& newname);
 
 private:
+  // Wire style tuning for tangent-based reroute rendering/selection
+  static constexpr float WIRE_ENDPOINT_BIAS = 60.0f; // horizontal bias at ends
+  static constexpr float WIRE_MIN_HANDLE = 10.0f;    // minimum handle length
+  static constexpr float WIRE_CLAMP_K = 0.45f;       // max handle = K * segment length
+
   void AddNode();
   void AddNodeForEntity(wi::ecs::Entity entity, const std::string& name);
   void AddTimerNode();
