@@ -84,7 +84,13 @@ public:
     OutputUI* FindOutputRow(const std::string& outputName) {
       auto it = outputIndex.find(outputName);
       if (it != outputIndex.end()) return it->second;
-      for (auto& r : outputRows) if (r->name == outputName) return (outputIndex[r->name] = r.get());
+      for (auto& r : outputRows) if (r->name == outputName) { outputIndex[r->name] = r.get(); return r.get(); }
+      return nullptr;
+    }
+    const OutputUI* FindOutputRow(const std::string& outputName) const {
+      auto it = outputIndex.find(outputName);
+      if (it != outputIndex.end()) return it->second;
+      for (const auto& r : outputRows) if (r->name == outputName) return r.get();
       return nullptr;
     }
 
@@ -145,6 +151,7 @@ private:
 
   // Wire selection + anchor dragging
   Node::ConnectionUI* selectedConnection = nullptr;
+  Node::ConnectionUI* hoveredConnection = nullptr; // preselection under cursor
   struct AnchorDrag {
     bool active = false;
     Node::ConnectionUI* conn = nullptr;

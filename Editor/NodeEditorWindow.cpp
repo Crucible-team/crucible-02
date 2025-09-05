@@ -375,6 +375,157 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
     // Flush batched wires before other draws
     wi::gui::FlushWireBatch();
 
+    // Hover overlay: draw hovered connection thicker on top for discoverability
+    // Skip when it is already selected to avoid double-highlighting
+    if (hoveredConnection != nullptr && hoveredConnection != selectedConnection)
+    {
+      // Find owner node and source output row
+      const Node* owner = nullptr;
+      for (const auto& n : nodes) {
+        for (const auto& cr : n->connectionRows) {
+          if (cr.get() == hoveredConnection) { owner = n.get(); break; }
+        }
+        if (owner) break;
+      }
+      if (owner) {
+        const Node::OutputUI* src_orow = owner->FindOutputRow(hoveredConnection->outputName);
+        if (src_orow) {
+          float sx, sy;
+          bool foundCache = false;
+          for (auto& co : owner->cachedOutputPins) {
+            if (co.row == src_orow) { sx = co.pos.x; sy = co.pos.y; foundCache = true; break; }
+          }
+          if (!foundCache) {
+            const float headerRight = std::max(src_orow->label.translation.x + src_orow->label.scale.x,
+                                              src_orow->addButton.translation.x + src_orow->addButton.scale.x);
+            sx = headerRight + 6.0f;
+            sy = src_orow->label.translation.y + src_orow->label.scale.y * 0.5f;
+          }
+
+          // Resolve targets similarly to render
+          wi::vector<const Node*> targets;
+          std::string target_text = GetFieldText(hoveredConnection->target);
+          if (!(target_text == "!self" || target_text.empty())) {
+            if (hoveredConnection->targetEntity != wi::ecs::INVALID_ENTITY) {
+              auto itent = entityIndex.find(hoveredConnection->targetEntity);
+              if (itent != entityIndex.end() && itent->second != owner) targets.push_back(itent->second);
+            } else {
+              if (auto itnode = nodeIndex.find(target_text); itnode != nodeIndex.end()) {
+                for (auto* cand : itnode->second) if (cand != owner) targets.push_back(cand);
+              }
+            }
+          }
+
+          const float endpointBias = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
+          const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
+          const float clampK = NodeEditorWindow::WIRE_CLAMP_K;
+          auto sub = [](const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x - b.x, a.y - b.y); };
+          auto mul = [](const XMFLOAT2& a, float s) { return XMFLOAT2(a.x * s, a.y * s); };
+          auto len = [](const XMFLOAT2& v) { return std::sqrt(v.x * v.x + v.y * v.y); };
+          auto clamp_handle = [&](const XMFLOAT2& v, float minl, float maxl, float fallback_dirx) {
+            float L = len(v);
+            if (L < 1e-5f) {
+              float Lc = std::max(minl, std::min(maxl, minl));
+              return XMFLOAT2((fallback_dirx >= 0 ? 1.0f : -1.0f) * Lc, 0);
+            }
+            float Lc = std::max(minl, std::min(maxl, L));
+            float s = Lc / L;
+            return XMFLOAT2(v.x * s, v.y * s);
+          };
+
+          // Build shared path
+          wi::vector<XMFLOAT2> shared_pts;
+          shared_pts.push_back(XMFLOAT2(sx, sy));
+          for (size_t i = 0; i < hoveredConnection->anchorHubIds.size(); ++i) {
+            const auto* hub = GetHub(hoveredConnection->anchorHubIds[i]); if (!hub) continue;
+            shared_pts.push_back(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
+          }
+          if (shared_pts.size() >= 2) {
+            wi::vector<XMFLOAT2> compact;
+            compact.reserve(shared_pts.size());
+            auto near_eq = [](const XMFLOAT2& a, const XMFLOAT2& b){ float dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy <= 1.0f; };
+            for (const auto& p : shared_pts) { if (compact.empty() || !near_eq(compact.back(), p)) compact.push_back(p); }
+            if (compact.size() >= 2) shared_pts = std::move(compact);
+          }
+
+          // Overlay draw: mild orange glow (thicker, semi-transparent)
+          const float glow_thick = 8.0f;
+          XMFLOAT4 glow_col = XMFLOAT4(1.0f, 0.6f, 0.2f, 0.35f);
+          wi::gui::BeginWireBatch(canvas, cmd);
+          if (shared_pts.size() >= 2) {
+            for (size_t i = 0; i + 1 < shared_pts.size(); ++i) {
+              const XMFLOAT2& P0 = shared_pts[i];
+              const XMFLOAT2& P1 = shared_pts[i + 1];
+              XMFLOAT2 T0, T1;
+              if (i == 0) {
+                T0 = XMFLOAT2(+endpointBias, 0);
+              } else {
+                const XMFLOAT2& Pm1 = shared_pts[i - 1];
+                T0 = mul(sub(shared_pts[i + 1], Pm1), 0.5f);
+              }
+              if (i + 1 < shared_pts.size() - 1) {
+                const XMFLOAT2& Pp2 = shared_pts[i + 2];
+                T1 = mul(sub(Pp2, P0), 0.5f);
+              } else {
+                T1 = mul(sub(P1, P0), 0.5f);
+              }
+              float seglen = len(sub(P1, P0));
+              float maxHandle = std::max(minHandle, seglen * clampK);
+              float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
+              float dirx1 = -dirx0;
+              T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
+              T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
+              wi::gui::AddWireBezierStripTangent(P0, P1, T0, T1, glow_thick, glow_col);
+            }
+          }
+
+          // Final legs to targets
+          const bool has_prev = shared_pts.size() >= 2;
+          const XMFLOAT2 shared_last = shared_pts.empty() ? XMFLOAT2(sx, sy) : shared_pts.back();
+          const XMFLOAT2 shared_prev = has_prev ? shared_pts[shared_pts.size() - 2] : shared_last;
+          const std::string input_name = GetFieldText(hoveredConnection->input);
+          for (const Node* target_node : targets) {
+            const wi::gui::Label* target_input_label = nullptr;
+            size_t target_input_index = (size_t)-1;
+            if (!input_name.empty()) {
+              if (target_node->GetInputIndex(input_name, target_input_index)) {
+                target_input_label = target_node->inputLabels[target_input_index].get();
+              }
+            }
+            float ex, ey;
+            if (target_input_label) {
+              if (target_input_index < target_node->cachedInputPins.size()) {
+                ex = target_node->cachedInputPins[target_input_index].x; ey = target_node->cachedInputPins[target_input_index].y;
+              } else {
+                ex = target_node->window.translation.x + 6.0f;
+                ey = target_input_label->translation.y + target_input_label->scale.y * 0.5f;
+              }
+            } else {
+              ex = target_node->window.translation.x + 6.0f;
+              ey = target_node->window.translation.y + target_node->window.scale.y * 0.5f;
+            }
+            const XMFLOAT2 P0 = shared_last;
+            const XMFLOAT2 P1 = XMFLOAT2(ex, ey);
+            XMFLOAT2 T0, T1;
+            if (has_prev) {
+              T0 = mul(sub(P1, shared_prev), 0.5f);
+            } else {
+              T0 = XMFLOAT2(+endpointBias, 0);
+            }
+            T1 = XMFLOAT2(+endpointBias, 0);
+            float seglen = len(sub(P1, P0));
+            float maxHandle = std::max(minHandle, seglen * clampK);
+            float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
+            float dirx1 = -dirx0;
+            T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
+            T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
+            wi::gui::AddWireBezierStripTangent(P0, P1, T0, T1, glow_thick, glow_col);
+          }
+          wi::gui::FlushWireBatch();
+        }
+      }
+    }
+
     // Draw preview wire while dragging (compute live source position to avoid 1-frame mismatch)
     if (drag.active && drag.srcNode && drag.srcOutput) {
       wi::gui::BeginWireBatch(canvas, cmd);
@@ -663,6 +814,153 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
       XMFLOAT4 pointer = wi::input::GetPointer();
       XMFLOAT2 p = XMFLOAT2(pointer.x, pointer.y);
 
+      // Hover preselection (closest wire under cursor):
+      {
+        const float baseThreshold = 12.0f; // logical pixels at 100% DPI
+        const float threshold = baseThreshold * canvas.GetDPIScaling();
+        const float thr2 = threshold * threshold;
+        Node::ConnectionUI* best = nullptr;
+        float best_d2 = thr2;
+        for (auto& n : nodes) {
+          for (auto& crow_uptr : n->connectionRows) {
+            auto* crow = crow_uptr.get();
+            std::string target_text = crow->target.GetText();
+            if (target_text == "!self" || target_text.empty()) continue;
+            wi::vector<const Node*> targets;
+            if (auto itnode = nodeIndex.find(target_text); itnode != nodeIndex.end()) {
+              for (auto* cand : itnode->second) if (cand != n.get()) targets.push_back(cand);
+            }
+            if (targets.empty()) continue;
+
+            // Source pin pos
+            const Node::OutputUI* src_orow = n->FindOutputRow(crow->outputName);
+            if (!src_orow) continue;
+            float sx = 0, sy = 0; bool foundCache = false;
+            for (auto& co : n->cachedOutputPins) { if (co.row == src_orow) { sx = co.pos.x; sy = co.pos.y; foundCache = true; break; } }
+            if (!foundCache) {
+              float headerRight = std::max(src_orow->label.translation.x + src_orow->label.scale.x, src_orow->addButton.translation.x + src_orow->addButton.scale.x);
+              sx = headerRight + 6.0f; sy = src_orow->label.translation.y + src_orow->label.scale.y * 0.5f;
+            }
+            XMFLOAT2 srcpos(sx, sy);
+
+            auto testSegment = [&](const XMFLOAT2& A, const XMFLOAT2& B) {
+              XMFLOAT2 AB(B.x - A.x, B.y - A.y);
+              float ab2 = AB.x * AB.x + AB.y * AB.y;
+              float t = 0;
+              if (ab2 > 0) t = std::max(0.f, std::min(1.f, ((p.x - A.x) * AB.x + (p.y - A.y) * AB.y) / ab2));
+              XMFLOAT2 H(A.x + AB.x * t, A.y + AB.y * t);
+              float dx = p.x - H.x; float dy = p.y - H.y; return dx * dx + dy * dy;
+            };
+            auto sub = [](const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x - b.x, a.y - b.y); };
+            auto addv = [](const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x + b.x, a.y + b.y); };
+            auto mul = [](const XMFLOAT2& a, float s) { return XMFLOAT2(a.x * s, a.y * s); };
+            auto len = [](const XMFLOAT2& v) { return std::sqrt(v.x * v.x + v.y * v.y); };
+            auto clamp_handle = [&](const XMFLOAT2& v, float minl, float maxl, float fallback_dirx) {
+              float L = len(v);
+              if (L < 1e-5f) {
+                float Lc = std::max(minl, std::min(maxl, minl));
+                return XMFLOAT2((fallback_dirx >= 0 ? 1.0f : -1.0f) * Lc, 0);
+              }
+              float Lc = std::max(minl, std::min(maxl, L));
+              float s = Lc / L;
+              return XMFLOAT2(v.x * s, v.y * s);
+            };
+            auto bezier_eval = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
+              const float it = 1.0f - t;
+              const float a = it * it * it;
+              const float b = 3.0f * it * it * t;
+              const float c = 3.0f * it * t * t;
+              const float d = t * t * t;
+              return XMFLOAT2(
+                a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+                a * p0.y + b * p1.y + c * p2.y + d * p3.y);
+            };
+            auto segment_min_d2 = [&](const XMFLOAT2& P0, const XMFLOAT2& P1, XMFLOAT2 T0, XMFLOAT2 T1) -> float {
+              const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
+              const float clampK = NodeEditorWindow::WIRE_CLAMP_K;
+              float seglen = len(sub(P1, P0));
+              float maxHandle = std::max(minHandle, seglen * clampK);
+              float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
+              float dirx1 = -dirx0;
+              T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
+              T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
+              XMFLOAT2 b0 = P0;
+              XMFLOAT2 b1 = addv(P0, mul(T0, 1.0f / 3.0f));
+              XMFLOAT2 b2 = sub(P1, mul(T1, 1.0f / 3.0f));
+              XMFLOAT2 b3 = P1;
+              const int samples = 24;
+              XMFLOAT2 prev = b0;
+              float local_best2 = FLT_MAX;
+              for (int s = 1; s <= samples; ++s) {
+                float t = (float)s / (float)samples;
+                XMFLOAT2 cur = bezier_eval(b0, b1, b2, b3, t);
+                float d2 = testSegment(prev, cur);
+                if (d2 < local_best2) local_best2 = d2;
+                prev = cur;
+              }
+              return local_best2;
+            };
+
+            // Shared path
+            wi::vector<XMFLOAT2> shared_pts;
+            shared_pts.push_back(srcpos);
+            for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
+              const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
+              shared_pts.push_back(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
+            }
+            if (shared_pts.size() >= 2) {
+              wi::vector<XMFLOAT2> compact;
+              compact.reserve(shared_pts.size());
+              auto near_eq = [](const XMFLOAT2& a, const XMFLOAT2& b){ float dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy <= 1.0f; };
+              for (const auto& sp : shared_pts) { if (compact.empty() || !near_eq(compact.back(), sp)) compact.push_back(sp); }
+              if (compact.size() >= 2) shared_pts = std::move(compact);
+            }
+
+            const float endpointBias = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
+            float conn_best2 = FLT_MAX;
+            for (size_t i = 0; i + 1 < shared_pts.size(); ++i) {
+              const XMFLOAT2& P0 = shared_pts[i];
+              const XMFLOAT2& P1 = shared_pts[i + 1];
+              XMFLOAT2 T0, T1;
+              if (i == 0) { T0 = XMFLOAT2(+endpointBias, 0); }
+              else { const XMFLOAT2& Pm1 = shared_pts[i - 1]; T0 = mul(sub(shared_pts[i + 1], Pm1), 0.5f); }
+              if (i + 1 < shared_pts.size() - 1) { const XMFLOAT2& Pp2 = shared_pts[i + 2]; T1 = mul(sub(Pp2, P0), 0.5f); }
+              else { T1 = mul(sub(P1, P0), 0.5f); }
+              float d2 = segment_min_d2(P0, P1, T0, T1);
+              if (d2 < conn_best2) conn_best2 = d2;
+            }
+
+            // Final legs to targets
+            const bool has_prev = shared_pts.size() >= 2;
+            const XMFLOAT2 shared_last = shared_pts.empty() ? srcpos : shared_pts.back();
+            const XMFLOAT2 shared_prev = has_prev ? shared_pts[shared_pts.size() - 2] : shared_last;
+            const std::string input_name = crow->input.GetText();
+            for (const Node* target_node : targets) {
+              const wi::gui::Label* target_input_label = nullptr;
+              size_t target_input_index = (size_t)-1;
+              if (!input_name.empty()) {
+                if (target_node->GetInputIndex(input_name, target_input_index)) {
+                  target_input_label = target_node->inputLabels[target_input_index].get();
+                }
+              }
+              float ex, ey;
+              if (target_input_label) {
+                if (target_input_index < target_node->cachedInputPins.size()) { ex = target_node->cachedInputPins[target_input_index].x; ey = target_node->cachedInputPins[target_input_index].y; }
+                else { ex = target_node->window.translation.x + 6.0f; ey = target_input_label->translation.y + target_input_label->scale.y * 0.5f; }
+              } else { ex = target_node->window.translation.x + 6.0f; ey = target_node->window.translation.y + target_node->window.scale.y * 0.5f; }
+              const float endpointBias2 = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
+              const XMFLOAT2 P0 = shared_last; const XMFLOAT2 P1 = XMFLOAT2(ex, ey);
+              XMFLOAT2 T0 = has_prev ? mul(sub(P1, shared_prev), 0.5f) : XMFLOAT2(+endpointBias2, 0);
+              XMFLOAT2 T1 = XMFLOAT2(+endpointBias2, 0);
+              float d2 = segment_min_d2(P0, P1, T0, T1);
+              if (d2 < conn_best2) conn_best2 = d2;
+            }
+            if (conn_best2 < best_d2) { best_d2 = conn_best2; best = crow; }
+          }
+        }
+        hoveredConnection = (best && best_d2 <= thr2) ? best : nullptr;
+      }
+
       // Anchor drag begin (left-click) and anchor right operations (right-click)
       if (!anchorDrag.active && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT)) {
         for (auto& n : nodes) {
@@ -805,9 +1103,12 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
       // Wire selection or anchor add
       if (!anchorDrag.active && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT)) {
         // Hit-test wires by sampling the same tangent-aware bezier chain used for rendering
-        Node::ConnectionUI* hit = nullptr;
-        const float threshold = 6.0f; // px
+        // Use closest-connection selection with DPI-aware threshold
+        const float baseThreshold = 9.0f; // logical pixels at 100% DPI
+        const float threshold = baseThreshold * canvas.GetDPIScaling();
         const float thr2 = threshold * threshold;
+        Node::ConnectionUI* best = nullptr;
+        float best_d2 = thr2;
         for (auto& n : nodes) {
           for (auto& crow_uptr : n->connectionRows) {
             auto* crow = crow_uptr.get();
@@ -864,7 +1165,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
                 a * p0.x + b * p1.x + c * p2.x + d * p3.x,
                 a * p0.y + b * p1.y + c * p2.y + d * p3.y);
             };
-            auto hit_segment = [&](const XMFLOAT2& P0, const XMFLOAT2& P1, XMFLOAT2 T0, XMFLOAT2 T1) -> bool {
+            auto segment_min_d2 = [&](const XMFLOAT2& P0, const XMFLOAT2& P1, XMFLOAT2 T0, XMFLOAT2 T1) -> float {
               const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
               const float clampK = NodeEditorWindow::WIRE_CLAMP_K;
               float seglen = len(sub(P1, P0));
@@ -877,18 +1178,20 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
               XMFLOAT2 b1 = addv(P0, mul(T0, 1.0f / 3.0f));
               XMFLOAT2 b2 = sub(P1, mul(T1, 1.0f / 3.0f));
               XMFLOAT2 b3 = P1;
-              const int samples = 16;
+              const int samples = 24;
               XMFLOAT2 prev = b0;
+              float local_best2 = FLT_MAX;
               for (int s = 1; s <= samples; ++s) {
                 float t = (float)s / (float)samples;
                 XMFLOAT2 cur = bezier_eval(b0, b1, b2, b3, t);
-                if (testSegment(prev, cur) <= thr2) return true;
+                float d2 = testSegment(prev, cur);
+                if (d2 < local_best2) local_best2 = d2;
                 prev = cur;
               }
-              return false;
+              return local_best2;
             };
 
-            // Shared path (source -> hubs): build once and test once
+            // Shared path (source -> hubs): build once and compute min distance once
             wi::vector<XMFLOAT2> shared_pts;
             shared_pts.push_back(srcpos);
             for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
@@ -904,8 +1207,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             }
 
             const float endpointBias = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
-
-            bool hit_shared = false;
+            float conn_best2 = FLT_MAX;
             for (size_t i = 0; i + 1 < shared_pts.size(); ++i) {
               const XMFLOAT2& P0 = shared_pts[i];
               const XMFLOAT2& P1 = shared_pts[i + 1];
@@ -922,11 +1224,10 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
               } else {
                 T1 = mul(sub(P1, P0), 0.5f);
               }
-              if (hit_segment(P0, P1, T0, T1)) { hit_shared = true; break; }
+              float d2 = segment_min_d2(P0, P1, T0, T1);
+              if (d2 < conn_best2) conn_best2 = d2;
             }
-            if (hit_shared) { hit = crow; break; }
-
-            if (hit) { selectedConnection = hit; break; }
+            // Continue to test final legs per target and keep best distance
             const std::string input_name = crow->input.GetText();
             // Otherwise test only the final leg (last shared -> target) per target
             const bool has_prev = shared_pts.size() >= 2;
@@ -962,13 +1263,14 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
                 T0 = XMFLOAT2(+endpointBias2, 0);
               }
               T1 = XMFLOAT2(+endpointBias2, 0);
-              if (hit_segment(P0, P1, T0, T1)) { hit = crow; break; }
+              float d2 = segment_min_d2(P0, P1, T0, T1);
+              if (d2 < conn_best2) conn_best2 = d2;
             }
-            if (hit) { selectedConnection = hit; break; }
+            if (conn_best2 < best_d2) { best_d2 = conn_best2; best = crow; }
           }
-          if (hit) break;
+          // don't break early; choose closest across all
         }
-        if (!hit) selectedConnection = nullptr;
+        selectedConnection = (best && best_d2 <= thr2) ? best : nullptr;
       }
       // Delete selected connection with Delete key (skip when editing its fields)
       if (selectedConnection && wi::input::Press(wi::input::KEYBOARD_BUTTON_DELETE)) {
