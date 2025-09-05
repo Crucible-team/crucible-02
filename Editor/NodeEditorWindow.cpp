@@ -5,6 +5,7 @@
 #include "wiImage.h"
 #include "wiScene.h"
 #include <unordered_set>
+#include <functional>
 
 
 using namespace wi::graphics;
@@ -77,6 +78,8 @@ void NodeEditorWindow::Create(EditorComponent *_editor) {
   AddWidget(&addSequenceButton, wi::gui::Window::AttachmentOptions::NONE);
 
   SetVisible(false);
+  nextNodeUid = 1;
+  nextConnUid = 1;
 }
 
 void NodeEditorWindow::BuildNodesFromSceneMetadata() {
@@ -691,9 +694,16 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           float dx = p.x - cx_base;
           float dy = p.y - cy;
           if (dx * dx + dy * dy <= pinDetectR * pinDetectR) {
-            // collect and remove
+            // collect and remove (with undo macro)
             wi::vector<Node::ConnectionUI*> toremove;
             for (auto& cr : n->connectionRows) if (cr->outputName == orow->name) toremove.push_back(cr.get());
+            NodeEditorWindow::UndoCommand macro; macro.type = NodeEditorWindow::UndoType::Macro; macro.label = "Remove all from output";
+            for (auto* r : toremove) {
+              NodeEditorWindow::ConnectionSnapshot s = MakeSnapshot(n.get(), r);
+              NodeEditorWindow::UndoCommand sub; sub.type = NodeEditorWindow::UndoType::RemoveConnection; sub.snap = s;
+              macro.macro.push_back(std::move(sub));
+            }
+            if (!toremove.empty()) PushCommand(std::move(macro));
             for (auto* r : toremove) {
               if (selectedConnection == r) selectedConnection = nullptr;
               n->RemoveConnectionRow(this, r);
@@ -808,6 +818,8 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           newDelay = "0.0";
         }
         bool exists = false;
+        // For grouping into a macro when dragging from hub:
+        bool deferBaseAdd = false; UndoCommand deferredBaseAdd;
         for (auto& cr : drag.srcNode->connectionRows) {
           if (cr->outputName != drag.srcOutput->name) continue;
           if (GetFieldText(cr->target) != newTarget) continue;
@@ -822,6 +834,9 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           if (!exists) {
             drag.movingConnection->target.SetValue(newTarget);
             drag.movingConnection->input.SetValue(newInput);
+            // Treat programmatic changes as committed state for edit-undo baselines
+            drag.movingConnection->lastTarget = newTarget;
+            drag.movingConnection->lastInput = newInput;
             drag.movingOwner->LayoutRows();
             selectedConnection = drag.movingConnection;
           }
@@ -834,8 +849,21 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             crow->input.SetValue(newInput);
             crow->param.SetValue("");
             crow->delay.SetValue("0.0");
+            // Initialize last-committed mirrors to these values so next edit undo works
+            crow->lastTarget = newTarget;
+            crow->lastInput = newInput;
+            crow->lastParam = "";
+            crow->lastDelay = "0.0";
             selectedConnection = crow;
             drag.srcNode->LayoutRows();
+            // Queue AddConnection for base row; if not from hub, push immediately
+            deferredBaseAdd.type = UndoType::AddConnection; deferredBaseAdd.snap = MakeSnapshot(drag.srcNode, crow);
+            if (drag.fromAnchor && anchorRight.conn && anchorRight.index >= 0 && anchorRight.index < (int)anchorRight.conn->anchorHubIds.size()) {
+              deferBaseAdd = true; // will be appended to macro later
+            } else {
+              PushCommand(std::move(deferredBaseAdd));
+              deferBaseAdd = false;
+            }
           }
           baseRow = selectedConnection;
           layoutDirty = true;
@@ -846,13 +874,21 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
 
         // If this connection was initiated from a shared hub, propagate to all owners of that hub
         if (drag.fromAnchor && anchorRight.conn && anchorRight.index >= 0 && anchorRight.index < (int)anchorRight.conn->anchorHubIds.size()) {
+          // Begin macro transaction to group the whole gesture into one undo step
+          UndoCommand macro; macro.type = UndoType::Macro; macro.label = "Connect from hub";
+          if (deferBaseAdd) { macro.macro.push_back(std::move(deferredBaseAdd)); deferBaseAdd = false; }
           uint32_t groupHub = anchorRight.conn->anchorHubIds[anchorRight.index];
           const std::string outname = anchorRight.conn->outputName;
           // Ensure the base row on the source owner is bound to the shared hub
           if (baseRow) {
             bool hasHub = false;
             for (auto hid : baseRow->anchorHubIds) { if (hid == groupHub) { hasHub = true; break; } }
-            if (!hasHub) { baseRow->anchorHubIds.push_back(groupHub); if (auto* h = GetHub(groupHub)) { h->refcount++; } }
+            if (!hasHub) {
+              UndoCommand cmd; cmd.type = UndoType::SetConnectionHubs; cmd.before = MakeSnapshot(drag.srcNode, baseRow); cmd.before.hubIds = baseRow->anchorHubIds;
+              baseRow->anchorHubIds.push_back(groupHub); if (auto* h = GetHub(groupHub)) { h->refcount++; }
+              cmd.after = MakeSnapshot(drag.srcNode, baseRow); cmd.after.hubIds = baseRow->anchorHubIds;
+              macro.macro.push_back(std::move(cmd));
+            }
           }
           for (auto& n2 : nodes) {
             Node* owner2 = n2.get();
@@ -882,18 +918,33 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
                 crow2->input.SetValue(newInput);
                 crow2->param.SetValue(newParam);
                 crow2->delay.SetValue(newDelay);
+                crow2->lastTarget = newTarget;
+                crow2->lastInput = newInput;
+                crow2->lastParam = newParam;
+                crow2->lastDelay = newDelay;
                 // Bind to shared hub
                 crow2->anchorHubIds.push_back(groupHub);
                 if (auto* h = GetHub(groupHub)) { h->refcount++; }
                 owner2->LayoutRows();
+                // Queue AddConnection on owner2 into macro
+                UndoCommand cmd; cmd.type = UndoType::AddConnection; cmd.snap = MakeSnapshot(owner2, crow2);
+                macro.macro.push_back(std::move(cmd));
               }
               layoutDirty = true;
             } else if (row2) {
               // Ensure existing row is bound to shared hub
               bool hasHub2 = false;
               for (auto hid : row2->anchorHubIds) { if (hid == groupHub) { hasHub2 = true; break; } }
-              if (!hasHub2) { row2->anchorHubIds.push_back(groupHub); if (auto* h = GetHub(groupHub)) { h->refcount++; } }
+              if (!hasHub2) {
+                UndoCommand cmd; cmd.type = UndoType::SetConnectionHubs; cmd.before = MakeSnapshot(owner2, row2); cmd.before.hubIds = row2->anchorHubIds;
+                row2->anchorHubIds.push_back(groupHub); if (auto* h = GetHub(groupHub)) { h->refcount++; }
+                cmd.after = MakeSnapshot(owner2, row2); cmd.after.hubIds = row2->anchorHubIds;
+                macro.macro.push_back(std::move(cmd));
+              }
             }
+          }
+          if (!macro.macro.empty()) {
+            PushCommand(std::move(macro));
           }
         }
       }
@@ -1075,6 +1126,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
                 anchorDrag.active = true;
                 anchorDrag.conn = crow;
                 anchorDrag.index = i;
+                anchorDrag.oldPos = hub->pos;
                 break;
               }
             }
@@ -1142,19 +1194,32 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
                   XMFLOAT2 other = otherhub->pos;
                   float dx = my.x - other.x; float dy = my.y - other.y;
                   if (dx * dx + dy * dy <= mergeThr2) {
-                    // rebind to shared hub id: dec old, inc new
+                    // rebind to shared hub id: dec old, inc new (with undo)
                     uint32_t old = anchorDrag.conn->anchorHubIds[anchorDrag.index];
+                    UndoCommand cmd; cmd.type = UndoType::SetConnectionHubs; cmd.before = MakeSnapshot(nullptr, anchorDrag.conn); cmd.before.node_uid = 0; // will be fixed below
+                    // fill node uid
+                    for (auto& nfill : nodes) { for (auto& crfill : nfill->connectionRows) if (crfill.get() == anchorDrag.conn) { cmd.before.node_uid = nfill->uid; break; } if (cmd.before.node_uid) break; }
+                    if (auto* hpre = GetHub(old)) { if (hpre->refcount == 1) { UndoCommand::HubCreate hc; hc.id = old; hc.pos = hpre->pos; cmd.hubs_undo_create.push_back(hc); } }
                     if (auto* h = GetHub(old)) { if (h->refcount > 0) h->refcount--; }
                     uint32_t newid = cr2->anchorHubIds[j];
                     anchorDrag.conn->anchorHubIds[anchorDrag.index] = newid;
                     if (auto* h2 = GetHub(newid)) { h2->refcount++; }
                     DeleteHubIfUnreferenced(old);
+                    cmd.after = cmd.before; cmd.after.hubIds = anchorDrag.conn->anchorHubIds;
+                    PushCommand(std::move(cmd));
                     merged = true; break;
                   }
                 }
                 if (merged) break;
               }
               if (merged) break;
+            }
+          }
+          // Also register hub move as an undoable command when position changed
+          if (anchorDrag.conn && anchorDrag.index >= 0 && anchorDrag.index < (int)anchorDrag.conn->anchorHubIds.size()) {
+            auto* hub = GetHub(anchorDrag.conn->anchorHubIds[anchorDrag.index]);
+            if (hub && (hub->pos.x != anchorDrag.oldPos.x || hub->pos.y != anchorDrag.oldPos.y)) {
+              UndoCommand cmd; cmd.type = UndoType::MoveHub; cmd.movehub.hubId = anchorDrag.conn->anchorHubIds[anchorDrag.index]; cmd.movehub.from = anchorDrag.oldPos; cmd.movehub.to = hub->pos; PushCommand(std::move(cmd));
             }
           }
           anchorDrag = {};
@@ -1187,9 +1252,13 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             // treat as delete anchor
             uint32_t hid = anchorRight.conn->anchorHubIds[anchorRight.index];
             // dec ref before removing
+            // Undo: capture hub list change
+            UndoCommand cmd; cmd.type = UndoType::SetConnectionHubs; cmd.before = MakeSnapshot(anchorRight.node, anchorRight.conn); cmd.before.hubIds = anchorRight.conn->anchorHubIds;
+            if (auto* hcheck = GetHub(hid)) { if (hcheck->refcount == 1) { UndoCommand::HubCreate hc; hc.id = hid; hc.pos = hcheck->pos; cmd.hubs_undo_create.push_back(hc); } }
             if (auto* h = GetHub(hid)) { if (h->refcount > 0) h->refcount--; }
             anchorRight.conn->anchorHubIds.erase(anchorRight.conn->anchorHubIds.begin() + anchorRight.index);
             DeleteHubIfUnreferenced(hid);
+            cmd.after = MakeSnapshot(anchorRight.node, anchorRight.conn); cmd.after.hubIds = anchorRight.conn->anchorHubIds; PushCommand(std::move(cmd));
           }
           anchorRight = {};
         }
@@ -1378,6 +1447,8 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           for (auto& n : nodes) {
             for (auto& cr : n->connectionRows) {
               if (cr.get() == selectedConnection) {
+                UndoCommand cmd; cmd.type = UndoType::RemoveConnection; cmd.snap = MakeSnapshot(n.get(), selectedConnection);
+                PushCommand(std::move(cmd));
                 n->RemoveConnectionRow(this, selectedConnection);
                 selectedConnection = nullptr;
                 break;
@@ -1395,7 +1466,14 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
         XMFLOAT2 local = XMFLOAT2(p2.x - scrollable_area.translation.x, p2.y - scrollable_area.translation.y);
         uint32_t hid = CreateHub(local);
         if (auto* h = GetHub(hid)) { h->refcount++; }
+        // Undoable add hub
+        UndoCommand cmd; cmd.type = UndoType::SetConnectionHubs; cmd.before = MakeSnapshot(nullptr, selectedConnection);
+        for (auto& nn : nodes) { for (auto& cr : nn->connectionRows) if (cr.get() == selectedConnection) { cmd.before.node_uid = nn->uid; break; } if (cmd.before.node_uid) break; }
         selectedConnection->anchorHubIds.push_back(hid);
+        cmd.after = cmd.before; cmd.after.hubIds = selectedConnection->anchorHubIds;
+        // ensure redo can recreate the hub after an undo
+        UndoCommand::HubCreate hc; hc.id = hid; hc.pos = local; cmd.hubs_redo_create.push_back(hc);
+        PushCommand(std::move(cmd));
       }
     }
   }
@@ -1580,12 +1658,28 @@ void NodeEditorWindow::ResizeLayout() {
   for (auto& node : nodes) {
     node->LayoutRows();
   }
+
+  // Handle local Undo/Redo shortcuts when Node Editor is visible
+  if (IsVisible())
+  {
+    bool ctrl = wi::input::Down(wi::input::KEYBOARD_BUTTON_LCONTROL) || wi::input::Down(wi::input::KEYBOARD_BUTTON_RCONTROL);
+    if (ctrl)
+    {
+      // Avoid when typing into any GUI field
+      if (!(editor && editor->GetGUI().IsTyping()))
+      {
+        if (wi::input::Press((wi::input::BUTTON)'Z')) { Undo(); }
+        if (wi::input::Press((wi::input::BUTTON)'Y') || (wi::input::Down(wi::input::KEYBOARD_BUTTON_LSHIFT) && wi::input::Press((wi::input::BUTTON)'Z'))) { Redo(); }
+      }
+    }
+  }
   
 }
 
 void NodeEditorWindow::AddNode() {
   std::string name = "Node " + std::to_string(nodes.size() + 1);
   auto node = std::make_unique<Node>(name);
+  node->uid = nextNodeUid++;
   node->type = Node::NodeType::LogicOnly;
   node->window.Create(
       name,
@@ -1640,6 +1734,7 @@ void NodeEditorWindow::AddNode() {
   });
 
   nodes.push_back(std::move(node));
+  RegisterNode(nodes.back().get());
   // index by name for fast lookup (support duplicates)
   nodeIndex[nodes.back()->name].push_back(nodes.back().get());
   nodes.back()->pinCacheDirty = true;
@@ -1655,6 +1750,7 @@ void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& 
   auto node = std::make_unique<Node>(name);
   node->entity = ent;
   node->type = Node::NodeType::EntityBound;
+  node->uid = nextNodeUid++;
   node->window.Create(
       name,
 	  Window::WindowControls::MOVE |
@@ -1701,6 +1797,7 @@ void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& 
 
   entityIndex[ent] = raw;
   nodes.push_back(std::move(node));
+  RegisterNode(nodes.back().get());
   nodeIndex[raw->name].push_back(raw);
   // Center the newly added node like AddNode()
   recentlyAddedNewNode = true;
@@ -1726,7 +1823,10 @@ void NodeEditorWindow::Node::AddOutputRow(NodeEditorWindow* owner, const std::st
   row->addButton.SetShadowRadius(0);
   row->addButton.SetSize(XMFLOAT2(40, 20));
   row->addButton.OnClick([this, owner, outputName](wi::gui::EventArgs) {
-    this->AddConnectionRow(owner, outputName);
+    auto* cr = this->AddConnectionRow(owner, outputName);
+    if (cr && owner) {
+      NodeEditorWindow::UndoCommand cmd; cmd.type = NodeEditorWindow::UndoType::AddConnection; cmd.snap = owner->MakeSnapshot(this, cr); owner->PushCommand(std::move(cmd));
+    }
     this->LayoutRows();
     if (owner && owner->editor) {
       owner->editor->generalWnd.RefreshTheme();
@@ -1741,7 +1841,7 @@ void NodeEditorWindow::Node::AddOutputRow(NodeEditorWindow* owner, const std::st
   pinCacheDirty = true;
 }
 
-NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName) {
+NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName, uint64_t forced_uid) {
   auto row = std::make_unique<ConnectionUI>();
   row->outputName = outputName;
 
@@ -1756,28 +1856,60 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   row->target.SetLocalizationEnabled(false);
   row->target.SetShadowRadius(0);
   row->target.SetValue("!self");
-  row->target.OnInputAccepted([this, owner](wi::gui::EventArgs){ if(owner) owner->layoutDirty = true; this->needsLayout = true; });
+  row->target.OnInputAccepted([this, owner, ptr=row.get()](wi::gui::EventArgs){
+    if (owner) {
+      NodeEditorWindow::UndoCommand cmd; cmd.type = NodeEditorWindow::UndoType::EditConnection;
+      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
+      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->target.GetValue(), ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
+      owner->PushCommand(std::move(cmd));
+      ptr->lastTarget = ptr->target.GetValue();
+    }
+    if(owner) owner->layoutDirty = true; this->needsLayout = true; });
   window.AddWidget(&row->target);
 
   row->input.Create("Input");
   row->input.SetLocalizationEnabled(false);
   row->input.SetShadowRadius(0);
   row->input.SetValue("FunctionName");
-  row->input.OnInputAccepted([this, owner](wi::gui::EventArgs){ if(owner) owner->layoutDirty = true; this->needsLayout = true; });
+  row->input.OnInputAccepted([this, owner, ptr=row.get()](wi::gui::EventArgs){
+    if (owner) {
+      NodeEditorWindow::UndoCommand cmd; cmd.type = NodeEditorWindow::UndoType::EditConnection;
+      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
+      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->input.GetValue(), ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
+      owner->PushCommand(std::move(cmd));
+      ptr->lastInput = ptr->input.GetValue();
+    }
+    if(owner) owner->layoutDirty = true; this->needsLayout = true; });
   window.AddWidget(&row->input);
 
   row->param.Create("Param");
   row->param.SetLocalizationEnabled(false);
   row->param.SetShadowRadius(0);
   row->param.SetValue("");
-  row->param.OnInputAccepted([this, owner](wi::gui::EventArgs){ if(owner) owner->layoutDirty = true; this->needsLayout = true; });
+  row->param.OnInputAccepted([this, owner, ptr=row.get()](wi::gui::EventArgs){
+    if (owner) {
+      NodeEditorWindow::UndoCommand cmd; cmd.type = NodeEditorWindow::UndoType::EditConnection;
+      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
+      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->param.GetValue(), ptr->lastDelay, ptr->anchorHubIds };
+      owner->PushCommand(std::move(cmd));
+      ptr->lastParam = ptr->param.GetValue();
+    }
+    if(owner) owner->layoutDirty = true; this->needsLayout = true; });
   window.AddWidget(&row->param);
 
   row->delay.Create("Delay");
   row->delay.SetLocalizationEnabled(false);
   row->delay.SetShadowRadius(0);
   row->delay.SetValue("0.0");
-  row->delay.OnInputAccepted([this, owner](wi::gui::EventArgs){ if(owner) owner->layoutDirty = true; this->needsLayout = true; });
+  row->delay.OnInputAccepted([this, owner, ptr=row.get()](wi::gui::EventArgs){
+    if (owner) {
+      NodeEditorWindow::UndoCommand cmd; cmd.type = NodeEditorWindow::UndoType::EditConnection;
+      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
+      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->delay.GetValue(), ptr->anchorHubIds };
+      owner->PushCommand(std::move(cmd));
+      ptr->lastDelay = ptr->delay.GetValue();
+    }
+    if(owner) owner->layoutDirty = true; this->needsLayout = true; });
   window.AddWidget(&row->delay);
 
   row->removeButton.Create("x");
@@ -1785,18 +1917,39 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   row->removeButton.SetShadowRadius(0);
   row->removeButton.SetSize(XMFLOAT2(18, 20));
   row->removeButton.OnClick([this, owner, ptr=row.get()](wi::gui::EventArgs){
+    if (owner) {
+      NodeEditorWindow::ConnectionSnapshot s;
+      s.node_uid = this->uid;
+      s.conn_uid = ptr->uid;
+      s.outputName = ptr->outputName;
+      s.target = GetFieldText(ptr->target);
+      s.input = GetFieldText(ptr->input);
+      s.param = GetFieldText(ptr->param);
+      s.delay = GetFieldText(ptr->delay);
+      s.hubIds = ptr->anchorHubIds;
+      NodeEditorWindow::UndoCommand cmd;
+      cmd.type = NodeEditorWindow::UndoType::RemoveConnection;
+      cmd.snap = s;
+      owner->PushCommand(std::move(cmd));
+    }
     this->RemoveConnectionRow(owner, ptr);
     this->LayoutRows();
   });
   window.AddWidget(&row->removeButton);
 
   ConnectionUI* ret = row.get();
+  ret->uid = forced_uid ? forced_uid : (owner ? owner->nextConnUid++ : 0);
+  ret->lastTarget = ret->target.GetValue();
+  ret->lastInput = ret->input.GetValue();
+  ret->lastParam = ret->param.GetValue();
+  ret->lastDelay = ret->delay.GetValue();
   connectionRows.push_back(std::move(row));
   if (owner) owner->layoutDirty = true;
   pinCacheDirty = true;
   if (owner && owner->editor) {
     owner->editor->generalWnd.RefreshTheme();
   }
+  if (owner) owner->RegisterConnection(this, ret);
   return ret;
 }
 
@@ -1822,6 +1975,7 @@ void NodeEditorWindow::Node::RemoveConnectionRow(NodeEditorWindow* owner, Connec
   for (auto it = connectionRows.begin(); it != connectionRows.end(); ++it) {
     if (it->get() == row) { connectionRows.erase(it); break; }
   }
+  if (owner) owner->UnregisterConnection(this, row);
   for (auto hid : hubs_to_check) {
     if (auto* h = owner->GetHub(hid)) { if (h->refcount > 0) h->refcount--; }
     owner->DeleteHubIfUnreferenced(hid);
@@ -2011,6 +2165,9 @@ void NodeEditorWindow::RemoveNode(Node* node) {
     }
   }
 
+  // unregister from uid maps
+  UnregisterNode(node);
+
   // Erase the node from our list (unique_ptr will clean up)
   for (auto it = nodes.begin(); it != nodes.end(); ++it) {
     if (it->get() == node) {
@@ -2066,6 +2223,133 @@ void NodeEditorWindow::DeleteHubIfUnreferenced(uint32_t id) {
   if (it != hubs.end() && it->second.refcount == 0) {
     hubs.erase(it);
   }
+}
+
+// ---- Undo/Redo helpers ----
+void NodeEditorWindow::RegisterNode(Node* n){ if(!n) return; nodesByUid[n->uid]=n; }
+void NodeEditorWindow::UnregisterNode(Node* n){ if(!n) return; nodesByUid.erase(n->uid); }
+void NodeEditorWindow::RegisterConnection(Node* owner, Node::ConnectionUI* row){ if(!row) return; connsByUid[row->uid]=row; }
+void NodeEditorWindow::UnregisterConnection(Node* owner, Node::ConnectionUI* row){ if(!row) return; connsByUid.erase(row->uid); }
+NodeEditorWindow::Node* NodeEditorWindow::FindNode(uint64_t uid) const { auto it=nodesByUid.find(uid); return it==nodesByUid.end()?nullptr:it->second; }
+NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::FindConnection(uint64_t uid) const { auto it=connsByUid.find(uid); return it==connsByUid.end()?nullptr:it->second; }
+
+NodeEditorWindow::ConnectionSnapshot NodeEditorWindow::MakeSnapshot(const Node* owner, const Node::ConnectionUI* row) const {
+  ConnectionSnapshot s;
+  if (!row) return s;
+  // Resolve owner if not provided
+  const Node* own = owner;
+  if (!own) {
+    for (const auto& n : nodes) {
+      for (const auto& cr : n->connectionRows) {
+        if (cr.get() == row) { own = n.get(); break; }
+      }
+      if (own) break;
+    }
+  }
+  if (!own) return s;
+  s.node_uid = own->uid;
+  s.conn_uid = row->uid;
+  s.outputName = row->outputName;
+  // Use helper that reads current input safely from const field
+  s.target = GetFieldText(row->target);
+  s.input = GetFieldText(row->input);
+  s.param = GetFieldText(row->param);
+  s.delay = GetFieldText(row->delay);
+  s.hubIds = row->anchorHubIds;
+  return s;
+}
+
+void NodeEditorWindow::ApplySnapshotAdd(const ConnectionSnapshot& s){
+  Node* n = FindNode(s.node_uid); if(!n) return; auto* row = n->AddConnectionRow(this, s.outputName, s.conn_uid); if(!row) return; row->target.SetValue(s.target); row->input.SetValue(s.input); row->param.SetValue(s.param); row->delay.SetValue(s.delay); row->anchorHubIds = s.hubIds; for(auto hid: s.hubIds){ if (auto* h = GetHub(hid)) { h->refcount++; } }
+  n->LayoutRows();
+  RegisterConnection(n,row);
+}
+void NodeEditorWindow::ApplySnapshotRemove(const ConnectionSnapshot& s){ Node* n=FindNode(s.node_uid); if(!n) return; Node::ConnectionUI* row = FindConnection(s.conn_uid); if(!row){ for(auto& cr: n->connectionRows){ if(cr->outputName==s.outputName && GetFieldText(cr->target)==s.target && GetFieldText(cr->input)==s.input && GetFieldText(cr->param)==s.param && GetFieldText(cr->delay)==s.delay){ row=cr.get(); break; } } }
+  if(row){ n->RemoveConnectionRow(this,row); }
+}
+
+void NodeEditorWindow::PushCommand(UndoCommand&& cmd){ undoStack.push_back(std::move(cmd)); redoStack.clear(); if(undoStack.size()>UNDO_LIMIT){ undoStack.erase(undoStack.begin()); } }
+
+void NodeEditorWindow::Undo(){ if(undoStack.empty()) return; UndoCommand cmd = std::move(undoStack.back()); undoStack.pop_back();
+  std::function<void(UndoCommand&)> applyUndo = [&](UndoCommand& c){
+    switch(c.type){
+      case UndoType::AddConnection: ApplySnapshotRemove(c.snap); break;
+      case UndoType::RemoveConnection: ApplySnapshotAdd(c.snap); break;
+      case UndoType::EditConnection: {
+        Node::ConnectionUI* r = FindConnection(c.after.conn_uid);
+        Node* n = FindNode(c.after.node_uid);
+        if (r && n) {
+          r->target.SetValue(c.before.target);
+          r->input.SetValue(c.before.input);
+          r->param.SetValue(c.before.param);
+          r->delay.SetValue(c.before.delay);
+          r->lastTarget = c.before.target;
+          r->lastInput  = c.before.input;
+          r->lastParam  = c.before.param;
+          r->lastDelay  = c.before.delay;
+          n->LayoutRows();
+        }
+      } break;
+      case UndoType::SetConnectionHubs: {
+        Node::ConnectionUI* r = FindConnection(c.after.conn_uid);
+        if (r) {
+          // Recreate any hubs needed for the "before" state
+          for (const auto& hc : c.hubs_undo_create) {
+            if (!GetHub(hc.id)) {
+              RerouteHub h; h.id = hc.id; h.pos = hc.pos; h.refcount = 0; hubs[h.id] = h; if (nextHubId <= h.id) nextHubId = h.id + 1;
+            }
+          }
+          for (auto hid: r->anchorHubIds) { if (auto* h=GetHub(hid)) { if (h->refcount>0) h->refcount--; } DeleteHubIfUnreferenced(hid); }
+          r->anchorHubIds = c.before.hubIds;
+          for (auto hid: r->anchorHubIds) { if (auto* h=GetHub(hid)) h->refcount++; }
+        }
+      } break;
+      case UndoType::MoveHub: { if(auto* h = GetHub(c.movehub.hubId)) h->pos = c.movehub.from; } break;
+      case UndoType::Macro: for(int i=(int)c.macro.size()-1;i>=0;--i) applyUndo(c.macro[i]); break; default: break; }
+  };
+  applyUndo(cmd);
+  redoStack.push_back(std::move(cmd));
+}
+
+void NodeEditorWindow::Redo(){ if(redoStack.empty()) return; UndoCommand cmd = std::move(redoStack.back()); redoStack.pop_back();
+  std::function<void(UndoCommand&)> applyRedo = [&](UndoCommand& c){
+    switch(c.type){
+      case UndoType::AddConnection: ApplySnapshotAdd(c.snap); break;
+      case UndoType::RemoveConnection: ApplySnapshotRemove(c.snap); break;
+      case UndoType::EditConnection: {
+        Node::ConnectionUI* r = FindConnection(c.before.conn_uid);
+        Node* n = FindNode(c.before.node_uid);
+        if (r && n) {
+          r->target.SetValue(c.after.target);
+          r->input.SetValue(c.after.input);
+          r->param.SetValue(c.after.param);
+          r->delay.SetValue(c.after.delay);
+          r->lastTarget = c.after.target;
+          r->lastInput  = c.after.input;
+          r->lastParam  = c.after.param;
+          r->lastDelay  = c.after.delay;
+          n->LayoutRows();
+        }
+      } break;
+      case UndoType::SetConnectionHubs: {
+        Node::ConnectionUI* r = FindConnection(c.before.conn_uid);
+        if (r) {
+          // Recreate any hubs needed for the "after" state
+          for (const auto& hc : c.hubs_redo_create) {
+            if (!GetHub(hc.id)) {
+              RerouteHub h; h.id = hc.id; h.pos = hc.pos; h.refcount = 0; hubs[h.id] = h; if (nextHubId <= h.id) nextHubId = h.id + 1;
+            }
+          }
+          for (auto hid: r->anchorHubIds) { if (auto* h=GetHub(hid)) { if (h->refcount>0) h->refcount--; } DeleteHubIfUnreferenced(hid); }
+          r->anchorHubIds = c.after.hubIds;
+          for (auto hid: r->anchorHubIds) { if (auto* h=GetHub(hid)) h->refcount++; }
+        }
+      } break;
+      case UndoType::MoveHub: { if(auto* h = GetHub(c.movehub.hubId)) h->pos = c.movehub.to; } break;
+      case UndoType::Macro: for(auto& sc : c.macro) applyRedo(sc); break; default: break; }
+  };
+  applyRedo(cmd);
+  undoStack.push_back(std::move(cmd));
 }
 void NodeEditorWindow::OnEntityRenamed(wi::ecs::Entity entity, const std::string& newname) {
   auto it = entityIndex.find(entity);

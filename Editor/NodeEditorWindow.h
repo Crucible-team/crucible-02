@@ -16,6 +16,7 @@ public:
     std::string name;
     wi::ecs::Entity entity = wi::ecs::INVALID_ENTITY;
     NodeType type = NodeType::LogicOnly;
+    uint64_t uid = 0; // stable identity within Node Editor
     // I/O visualization data for this node:
     wi::vector<std::string> inputs;   // function names (sinks)
     wi::vector<std::string> outputs;  // event names (sources)
@@ -36,6 +37,12 @@ public:
       wi::vector<uint32_t> anchorHubIds;    // reroute anchors referencing shared hubs
       // Optional strong binding to a specific entity target; UI target text mirrors NameComponent
       wi::ecs::Entity targetEntity = wi::ecs::INVALID_ENTITY;
+      uint64_t uid = 0; // stable identity of this connection row
+      // Last committed values for undo of text edits:
+      std::string lastTarget;
+      std::string lastInput;
+      std::string lastParam;
+      std::string lastDelay;
     };
     wi::vector<std::unique_ptr<OutputUI>> outputRows;
     wi::vector<std::unique_ptr<ConnectionUI>> connectionRows;
@@ -61,7 +68,7 @@ public:
     bool activeEditing = false;          // true if any field in this node is active
 
     void AddOutputRow(NodeEditorWindow* owner, const std::string& outputName);
-    ConnectionUI* AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName);
+    ConnectionUI* AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName, uint64_t forced_uid = 0);
     void RemoveConnectionRow(NodeEditorWindow* owner, ConnectionUI* row);
     void LayoutRows();
     void ComputePinCache();
@@ -156,6 +163,7 @@ private:
     bool active = false;
     Node::ConnectionUI* conn = nullptr;
     int index = -1;
+    XMFLOAT2 oldPos = XMFLOAT2(0,0);
   } anchorDrag;
   struct AnchorRightOp {
     bool active = false;
@@ -178,5 +186,61 @@ private:
   const RerouteHub* GetHub(uint32_t id) const;
   uint32_t CreateHub(const XMFLOAT2& local);
   void DeleteHubIfUnreferenced(uint32_t id);
+
+  // ---- Undo/Redo ----
+  struct ConnectionSnapshot {
+    uint64_t node_uid = 0;
+    uint64_t conn_uid = 0;
+    std::string outputName;
+    std::string target;
+    std::string input;
+    std::string param;
+    std::string delay;
+    wi::vector<uint32_t> hubIds;
+  };
+  enum class UndoType {
+    None,
+    AddConnection,
+    RemoveConnection,
+    EditConnection,          // before/after snapshots
+    SetConnectionHubs,       // before/after hub list
+    MoveHub,
+    Macro
+  };
+  struct UndoCommand {
+    UndoType type = UndoType::None;
+    std::string label;
+    // Payloads:
+    ConnectionSnapshot snap;           // Add/Remove
+    ConnectionSnapshot before, after;  // Edit / SetConnectionHubs
+    struct { uint32_t hubId = 0; XMFLOAT2 from = {}, to = {}; } movehub;
+    struct HubCreate { uint32_t id = 0; XMFLOAT2 pos = XMFLOAT2(0,0); };
+    wi::vector<HubCreate> hubs_undo_create; // hubs to (re)create before applying Undo
+    wi::vector<HubCreate> hubs_redo_create; // hubs to (re)create before applying Redo
+    wi::vector<UndoCommand> macro;
+  };
+  wi::vector<UndoCommand> undoStack;
+  wi::vector<UndoCommand> redoStack;
+  static constexpr size_t UNDO_LIMIT = 256;
+
+  // id maps
+  uint64_t nextNodeUid = 1;
+  uint64_t nextConnUid = 1;
+  std::unordered_map<uint64_t, Node*> nodesByUid;
+  std::unordered_map<uint64_t, Node::ConnectionUI*> connsByUid;
+
+  void RegisterNode(Node* n);
+  void UnregisterNode(Node* n);
+  void RegisterConnection(Node* owner, Node::ConnectionUI* row);
+  void UnregisterConnection(Node* owner, Node::ConnectionUI* row);
+  Node* FindNode(uint64_t uid) const;
+  Node::ConnectionUI* FindConnection(uint64_t uid) const;
+
+  ConnectionSnapshot MakeSnapshot(const Node* owner, const Node::ConnectionUI* row) const;
+  void ApplySnapshotAdd(const ConnectionSnapshot& s);
+  void ApplySnapshotRemove(const ConnectionSnapshot& s);
+  void PushCommand(UndoCommand&& cmd);
+  void Undo();
+  void Redo();
 
 };
