@@ -6,6 +6,8 @@
 #include "wiScene.h"
 #include <unordered_set>
 #include <functional>
+#include <fstream>
+#include "json.hpp"
 
 
 using namespace wi::graphics;
@@ -76,6 +78,23 @@ void NodeEditorWindow::Create(EditorComponent *_editor) {
   addSequenceButton.SetSize(XMFLOAT2(120, 25));
   addSequenceButton.OnClick([this](wi::gui::EventArgs) { AddSequenceNode(); });
   AddWidget(&addSequenceButton, wi::gui::Window::AttachmentOptions::NONE);
+
+  saveGraphButton.Create("Save Graph");
+  saveGraphButton.SetLocalizationEnabled(false);
+  saveGraphButton.SetSize(XMFLOAT2(120, 25));
+  saveGraphButton.OnClick([this](wi::gui::EventArgs) {
+    // TODO: integrate file picker; default to nodegraph.json
+    SaveGraph("nodegraph.json");
+  });
+  AddWidget(&saveGraphButton, wi::gui::Window::AttachmentOptions::NONE);
+
+  loadGraphButton.Create("Load Graph");
+  loadGraphButton.SetLocalizationEnabled(false);
+  loadGraphButton.SetSize(XMFLOAT2(120, 25));
+  loadGraphButton.OnClick([this](wi::gui::EventArgs) {
+    LoadGraph("nodegraph.json");
+  });
+  AddWidget(&loadGraphButton, wi::gui::Window::AttachmentOptions::NONE);
 
   SetVisible(false);
   nextNodeUid = 1;
@@ -1628,6 +1647,20 @@ void NodeEditorWindow::ResizeLayout() {
       addSequenceButton.GetPos().y - addTimerButton.GetSize().y - padding));
   addTimerButton.AttachTo(this);
 
+  saveGraphButton.Detach();
+  saveGraphButton.SetSize(XMFLOAT2(separator - padding * 2, saveGraphButton.GetSize().y));
+  saveGraphButton.SetPos(XMFLOAT2(
+      translation.x + padding,
+      addTimerButton.GetPos().y - saveGraphButton.GetSize().y - padding));
+  saveGraphButton.AttachTo(this);
+
+  loadGraphButton.Detach();
+  loadGraphButton.SetSize(XMFLOAT2(separator - padding * 2, loadGraphButton.GetSize().y));
+  loadGraphButton.SetPos(XMFLOAT2(
+      translation.x + padding,
+      saveGraphButton.GetPos().y - loadGraphButton.GetSize().y - padding));
+  loadGraphButton.AttachTo(this);
+
   if (recentlyAddedNewNode)
   {
       recentlyAddedNewNode = false;
@@ -2390,6 +2423,191 @@ void NodeEditorWindow::OnEntityRenamed(wi::ecs::Entity entity, const std::string
       }
     }
   }
+}
+
+// =====================
+// Save / Load (JSON)
+// =====================
+
+bool NodeEditorWindow::SaveGraph(const std::string& path) const
+{
+  using nlohmann::json;
+  json j;
+  j["version"] = 1;
+
+  // Hubs
+  json jhubs = json::array();
+  for (const auto& kv : hubs) {
+    const auto& h = kv.second;
+    json hj;
+    hj["id"] = h.id;
+    hj["pos"] = { {"x", h.pos.x}, {"y", h.pos.y} };
+    jhubs.push_back(hj);
+  }
+  j["hubs"] = jhubs;
+
+  // Nodes
+  json jnodes = json::array();
+  for (const auto& np : nodes) {
+    const Node* n = np.get();
+    json nj;
+    nj["uid"] = n->uid;
+    nj["type"] = (n->type == Node::NodeType::EntityBound ? "EntityBound" : "LogicOnly");
+    nj["name"] = n->name;
+    // NOTE: Do not serialize engine entity linkage here.
+    // Future work: InputOutputComponent will hold association from Entity -> Node uid.
+    nj["pos"] = { {"x", n->window.translation.x}, {"y", n->window.translation.y} };
+    nj["size"] = { {"w", n->window.scale.x}, {"h", n->window.scale.y} };
+
+    // I/O lists
+    // NOTE: For EntityBound nodes, outputs should be derived from the bound entity.
+    // Saving them for now for compatibility; consider ignoring on load in the future.
+    json jins = json::array(); for (auto& s : n->inputs) jins.push_back(s);
+    json jouts = json::array(); for (auto& s : n->outputs) jouts.push_back(s);
+    nj["inputs"] = jins;
+    nj["outputs"] = jouts;
+
+    // Connections
+    json jconns = json::array();
+    for (const auto& crp : n->connectionRows) {
+      const Node::ConnectionUI* cr = crp.get();
+      json cj;
+      cj["uid"] = cr->uid;
+      cj["outputName"] = cr->outputName;
+      cj["target"] = GetFieldText(cr->target);
+      cj["targetEntity"] = (uint64_t)cr->targetEntity;
+      cj["input"] = GetFieldText(cr->input);
+      cj["param"] = GetFieldText(cr->param);
+      cj["delay"] = GetFieldText(cr->delay);
+      json jh = json::array(); for (auto hid : cr->anchorHubIds) jh.push_back(hid); cj["hubs"] = jh;
+      jconns.push_back(cj);
+    }
+    nj["connections"] = jconns;
+
+    jnodes.push_back(nj);
+  }
+  j["nodes"] = jnodes;
+
+  // Next ids
+  j["nextIds"] = { {"node", nextNodeUid}, {"conn", nextConnUid}, {"hub", nextHubId} };
+
+  std::ofstream ofs(path, std::ios::binary);
+  if (!ofs.good()) return false;
+  ofs << j.dump(2);
+  return ofs.good();
+}
+
+bool NodeEditorWindow::LoadGraph(const std::string& path)
+{
+  using nlohmann::json;
+  std::ifstream ifs(path, std::ios::binary);
+  if (!ifs.good()) return false;
+  json j; ifs >> j; if (!ifs.good() && !ifs.eof()) return false;
+
+  // Clear current graph
+  selectedConnection = nullptr; hoveredConnection = nullptr;
+  // Remove nodes safely
+  wi::vector<Node*> toremove; for (auto& n : nodes) toremove.push_back(n.get());
+  for (auto* n : toremove) RemoveNode(n);
+  nodes.clear(); nodeIndex.clear(); entityIndex.clear(); nodesByUid.clear(); connsByUid.clear();
+  hubs.clear(); nextHubId = 1;
+  undoStack.clear(); redoStack.clear();
+
+  int version = j.value("version", 1);
+  (void)version;
+
+  // Hubs
+  if (j.contains("hubs")) {
+    for (auto& hj : j["hubs"]) {
+      RerouteHub h; h.id = hj.value("id", 0u);
+      auto pj = hj["pos"]; h.pos.x = pj.value("x", 0.0f); h.pos.y = pj.value("y", 0.0f);
+      h.refcount = 0; hubs[h.id] = h; if (nextHubId <= h.id) nextHubId = h.id + 1;
+    }
+  }
+
+  auto mk_vec_str = [](const json& arr){ wi::vector<std::string> out; if(arr.is_array()) for(auto& x: arr) out.push_back(x.get<std::string>()); return out; };
+
+  // Nodes
+  if (j.contains("nodes")) {
+    for (auto& nj : j["nodes"]) {
+      auto node = std::make_unique<Node>(nj.value("name", std::string("Node")));
+      node->uid = nj.value("uid", nextNodeUid++);
+      std::string type = nj.value("type", std::string("LogicOnly"));
+      node->type = (type == "EntityBound" ? Node::NodeType::EntityBound : Node::NodeType::LogicOnly);
+      // NOTE: We intentionally do not restore engine entity linkage here.
+      // That mapping will be provided by a future InputOutputComponent that
+      // associates an Entity with a Node uid. For now, keep it invalid:
+      node->entity = wi::ecs::INVALID_ENTITY;
+
+      // Build UI similar to AddNode()/AddNodeForEntity() but from saved IO lists
+      node->window.Create(node->name,
+        Window::WindowControls::MOVE | Window::WindowControls::CLOSE | Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
+      node->window.SetSize(XMFLOAT2(NODE_MIN_CONTENT_W, 110));
+      node->label.Create(node->name); node->label.SetText(node->name); node->label.SetPos(XMFLOAT2(4,4)); node->label.SetSize(XMFLOAT2(112,20));
+      node->window.AddWidget(&node->label);
+
+      node->inputs = mk_vec_str(nj["inputs"]);
+      node->outputs = mk_vec_str(nj["outputs"]);
+      // TODO: For EntityBound nodes, outputs should be derived from the bound entity instead of loading.
+
+      for (auto& outname : node->outputs) node->AddOutputRow(this, outname);
+      for (auto& inname : node->inputs) {
+        auto lbl = std::make_unique<wi::gui::Label>(); lbl->Create(inname); lbl->SetLocalizationEnabled(false); lbl->SetShadowRadius(0); lbl->SetText(inname);
+        node->window.AddWidget(lbl.get()); node->inputLabels.push_back(std::move(lbl)); node->inputIndex[inname] = node->inputLabels.size()-1;
+      }
+      node->LayoutRows();
+      AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
+      node->window.SetEnabled(true); node->window.SetVisible(true);
+
+      Node* raw = node.get();
+      node->window.OnClose([this, raw](wi::gui::EventArgs){ pendingRemoval.push_back(raw); });
+      nodes.push_back(std::move(node));
+      RegisterNode(nodes.back().get());
+      nodeIndex[nodes.back()->name].push_back(nodes.back().get());
+
+      // Position/size
+      auto pj = nj["pos"]; float px = pj.value("x", 0.0f), py = pj.value("y", 0.0f);
+      auto sj = nj["size"]; float sw = sj.value("w", nodes.back()->window.scale.x), sh = sj.value("h", nodes.back()->window.scale.y);
+      nodes.back()->window.SetPos(XMFLOAT2(px, py)); nodes.back()->window.SetSize(XMFLOAT2(sw, sh));
+
+      // Connections
+      if (nj.contains("connections")) {
+        for (auto& cj : nj["connections"]) {
+          std::string outname = cj.value("outputName", std::string()); if (outname.empty()) continue;
+          uint64_t cuid = cj.value("uid", (uint64_t)0);
+          auto* cr = nodes.back()->AddConnectionRow(this, outname, cuid);
+          if (!cr) continue; RegisterConnection(nodes.back().get(), cr);
+          cr->target.SetValue(cj.value("target", std::string("!self")));
+          cr->targetEntity = (wi::ecs::Entity)cj.value("targetEntity", (uint64_t)wi::ecs::INVALID_ENTITY);
+          cr->input.SetValue(cj.value("input", std::string("FunctionName")));
+          cr->param.SetValue(cj.value("param", std::string("")));
+          cr->delay.SetValue(cj.value("delay", std::string("0.0")));
+          // last-committed mirrors
+          cr->lastTarget = cr->target.GetValue(); cr->lastInput = cr->input.GetValue(); cr->lastParam = cr->param.GetValue(); cr->lastDelay = cr->delay.GetValue();
+          // hubs
+          cr->anchorHubIds.clear(); if (cj.contains("hubs")) { for (auto& hx : cj["hubs"]) { uint32_t hid = hx.get<uint32_t>(); cr->anchorHubIds.push_back(hid); if (auto* h=GetHub(hid)) h->refcount++; } }
+        }
+      }
+      nodes.back()->LayoutRows();
+    }
+  }
+
+  // Next ids
+  if (j.contains("nextIds")) {
+    nextNodeUid = j["nextIds"].value("node", nextNodeUid);
+    nextConnUid = j["nextIds"].value("conn", nextConnUid);
+    nextHubId   = j["nextIds"].value("hub",  nextHubId);
+  } else {
+    // recompute
+    uint64_t maxn=0, maxc=0; uint32_t maxh=0;
+    for (auto& n : nodes) { if (n->uid>maxn) maxn=n->uid; for (auto& cr : n->connectionRows) if (cr->uid>maxc) maxc=cr->uid; }
+    for (auto& kv : hubs) if (kv.first>maxh) maxh=kv.first;
+    nextNodeUid = maxn + 1; nextConnUid = maxc + 1; nextHubId = maxh + 1;
+  }
+
+  // Finalize
+  layoutDirty = true; for (auto& n : nodes) n->pinCacheDirty = true;
+  return true;
 }
 void NodeEditorWindow::AddTimerNode() {
   std::string name = "Timer";

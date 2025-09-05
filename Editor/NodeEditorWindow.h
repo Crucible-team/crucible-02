@@ -113,6 +113,8 @@ public:
   wi::gui::Button importFromSceneButton;
   wi::gui::Button addTimerButton;
   wi::gui::Button addSequenceButton;
+  wi::gui::Button saveGraphButton;
+  wi::gui::Button loadGraphButton;
   bool recentlyAddedNewNode = false;
 
   void Update(const wi::Canvas &canvas, float dt) override;
@@ -121,6 +123,9 @@ public:
   void ResizeLayout() override;
   // External notifications:
   void OnEntityRenamed(wi::ecs::Entity entity, const std::string& newname);
+  // Persistence (JSON): save/load full node graph
+  bool SaveGraph(const std::string& path) const;
+  bool LoadGraph(const std::string& path);
 
 private:
   // Wire style tuning for tangent-based reroute rendering/selection
