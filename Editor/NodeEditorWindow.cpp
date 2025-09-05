@@ -197,6 +197,9 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
       // Targets can multiply segments, so give some headroom
       drawnSegments.reserve(approx * 2 + 16);
     }
+    // Begin batched wire drawing
+    wi::gui::BeginWireBatch(canvas, cmd);
+
     for (const auto& n : nodes) {
       for (const auto& crow_uptr : n->connectionRows) {
         const auto* crow = crow_uptr.get();
@@ -309,7 +312,7 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
             float dirx1 = -dirx0;
             T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
             T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
-            wi::gui::DrawWireBezierStripTangent(P0, P1, T0, T1, 2.0f, col, canvas, cmd);
+            wi::gui::AddWireBezierStripTangent(P0, P1, T0, T1, 2.0f, col);
             drawnSegments.insert(segkey);
           }
         }
@@ -322,21 +325,17 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
 
         for (const Node* target_node : targets) {
           const wi::gui::Label* target_input_label = nullptr;
+          size_t target_input_index = (size_t)-1;
           if (!input_name.empty()) {
-            for (const auto& ilbl_uptr : target_node->inputLabels) {
-              if (ilbl_uptr->GetText() == input_name) { target_input_label = ilbl_uptr.get(); break; }
+            if (target_node->GetInputIndex(input_name, target_input_index)) {
+              target_input_label = target_node->inputLabels[target_input_index].get();
             }
           }
           float ex, ey;
           if (target_input_label) {
-            bool foundTargetCache = false;
-            for (size_t i = 0; i < target_node->inputLabels.size(); ++i) {
-              if (target_node->inputLabels[i].get() == target_input_label) {
-                if (i < target_node->cachedInputPins.size()) { ex = target_node->cachedInputPins[i].x; ey = target_node->cachedInputPins[i].y; foundTargetCache = true; }
-                break;
-              }
-            }
-            if (!foundTargetCache) {
+            if (target_input_index < target_node->cachedInputPins.size()) {
+              ex = target_node->cachedInputPins[target_input_index].x; ey = target_node->cachedInputPins[target_input_index].y;
+            } else {
               ex = target_node->window.translation.x + 6.0f;
               ey = target_input_label->translation.y + target_input_label->scale.y * 0.5f;
             }
@@ -366,31 +365,19 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           float dirx1 = -dirx0;
           T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
           T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
-          wi::gui::DrawWireBezierStripTangent(P0, P1, T0, T1, 2.0f, col, canvas, cmd);
+          wi::gui::AddWireBezierStripTangent(P0, P1, T0, T1, 2.0f, col);
           drawnSegments.insert(lastseg);
         }
-
-        if (selectedConnection == crow) {
-          for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
-            const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
-            XMFLOAT2 ap(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
-            wi::image::Params a;
-            a.pos = XMFLOAT3(ap.x, ap.y, 0);
-            a.siz = XMFLOAT2(10, 10);
-            a.pivot = XMFLOAT2(0.5f, 0.5f);
-            a.color = XMFLOAT4(1, 1, 1, 0.9f);
-            a.enableCornerRounding();
-            for (int k = 0; k < arraysize(a.corners_rounding); ++k) a.corners_rounding[k].radius = 5;
-            wi::image::Draw(nullptr, a, cmd);
-          }
-        }
-        
         
       }
     }
 
+    // Flush batched wires before other draws
+    wi::gui::FlushWireBatch();
+
     // Draw preview wire while dragging (compute live source position to avoid 1-frame mismatch)
     if (drag.active && drag.srcNode && drag.srcOutput) {
+      wi::gui::BeginWireBatch(canvas, cmd);
       float sx = 0.0f;
       float sy = 0.0f;
       if (drag.fromAnchor) {
@@ -437,7 +424,24 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           T1 = XMFLOAT2(-T0.x, 0);
         }
       }
-      wi::gui::DrawWireBezierStripTangent(P0, P1, T0, T1, 2.0f, XMFLOAT4(0.8f, 0.9f, 1.0f, 0.9f), canvas, cmd);
+      wi::gui::AddWireBezierStripTangent(P0, P1, T0, T1, 2.0f, XMFLOAT4(0.8f, 0.9f, 1.0f, 0.9f));
+      wi::gui::FlushWireBatch();
+    }
+
+    // Draw anchor handles for the selected connection on top
+    if (selectedConnection != nullptr) {
+      for (size_t i = 0; i < selectedConnection->anchorHubIds.size(); ++i) {
+        const auto* hub = GetHub(selectedConnection->anchorHubIds[i]); if (!hub) continue;
+        XMFLOAT2 ap(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
+        wi::image::Params a;
+        a.pos = XMFLOAT3(ap.x, ap.y, 0);
+        a.siz = XMFLOAT2(10, 10);
+        a.pivot = XMFLOAT2(0.5f, 0.5f);
+        a.color = XMFLOAT4(1, 1, 1, 0.9f);
+        a.enableCornerRounding();
+        for (int k = 0; k < arraysize(a.corners_rounding); ++k) a.corners_rounding[k].radius = 5;
+        wi::image::Draw(nullptr, a, cmd);
+      }
     }
   }
 }
@@ -816,14 +820,17 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             }
             if (targets.empty()) continue;
 
-            
-            const Node::OutputUI* src_orow = nullptr;
-            for (const auto& orow_uptr : n->outputRows) if (orow_uptr->name == crow->outputName) { src_orow = orow_uptr.get(); break; }
+            // Resolve source pin position (prefer cache)
+            const Node::OutputUI* src_orow = n->FindOutputRow(crow->outputName);
             if (!src_orow) continue;
-            float headerRight = std::max(src_orow->label.translation.x + src_orow->label.scale.x,
-                                         src_orow->addButton.translation.x + src_orow->addButton.scale.x);
-            XMFLOAT2 astart(headerRight + 6.0f, src_orow->label.translation.y + src_orow->label.scale.y * 0.5f);
-            XMFLOAT2 srcpos = astart;
+            float sx = 0, sy = 0; bool foundCache = false;
+            for (auto& co : n->cachedOutputPins) { if (co.row == src_orow) { sx = co.pos.x; sy = co.pos.y; foundCache = true; break; } }
+            if (!foundCache) {
+              float headerRight = std::max(src_orow->label.translation.x + src_orow->label.scale.x, src_orow->addButton.translation.x + src_orow->addButton.scale.x);
+              sx = headerRight + 6.0f;
+              sy = src_orow->label.translation.y + src_orow->label.scale.y * 0.5f;
+            }
+            XMFLOAT2 srcpos(sx, sy);
 
             auto testSegment = [&](const XMFLOAT2& A, const XMFLOAT2& B) {
               XMFLOAT2 AB(B.x - A.x, B.y - A.y);
@@ -847,87 +854,115 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
               float s = Lc / L;
               return XMFLOAT2(v.x * s, v.y * s);
             };
-            auto hit_chain = [&](const wi::vector<XMFLOAT2>& pts) -> bool {
-              if (pts.size() < 2) return false;
-              const float endpointBias = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
+            auto bezier_eval = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
+              const float it = 1.0f - t;
+              const float a = it * it * it;
+              const float b = 3.0f * it * it * t;
+              const float c = 3.0f * it * t * t;
+              const float d = t * t * t;
+              return XMFLOAT2(
+                a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+                a * p0.y + b * p1.y + c * p2.y + d * p3.y);
+            };
+            auto hit_segment = [&](const XMFLOAT2& P0, const XMFLOAT2& P1, XMFLOAT2 T0, XMFLOAT2 T1) -> bool {
               const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
               const float clampK = NodeEditorWindow::WIRE_CLAMP_K;
-              auto bezier = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
-                const float it = 1.0f - t;
-                const float a = it * it * it;
-                const float b = 3.0f * it * it * t;
-                const float c = 3.0f * it * t * t;
-                const float d = t * t * t;
-                return XMFLOAT2(
-                  a * p0.x + b * p1.x + c * p2.x + d * p3.x,
-                  a * p0.y + b * p1.y + c * p2.y + d * p3.y);
-              };
-              for (size_t i = 0; i + 1 < pts.size(); ++i) {
-                const XMFLOAT2& P0 = pts[i];
-                const XMFLOAT2& P1 = pts[i + 1];
-                XMFLOAT2 T0, T1;
-                if (i == 0) {
-                  // Always leave outputs horizontally to the right
-                  T0 = XMFLOAT2(+endpointBias, 0);
-                } else {
-                  const XMFLOAT2& Pm1 = pts[i - 1];
-                  T0 = mul(sub(pts[i + 1], Pm1), 0.5f);
-                }
-                if (i + 1 == pts.size() - 1) {
-                  // Always enter inputs horizontally from the right
-                  T1 = XMFLOAT2(-endpointBias, 0);
-                } else {
-                  const XMFLOAT2& Pp2 = pts[i + 2];
-                  T1 = mul(sub(Pp2, P0), 0.5f);
-                }
-                float seglen = len(sub(P1, P0));
-                float maxHandle = std::max(minHandle, seglen * clampK);
-                float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
-                float dirx1 = -dirx0;
-                T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
-                T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
-                XMFLOAT2 b0 = P0;
-                XMFLOAT2 b1 = addv(P0, mul(T0, 1.0f / 3.0f));
-                XMFLOAT2 b2 = sub(P1, mul(T1, 1.0f / 3.0f));
-                XMFLOAT2 b3 = P1;
-                const int samples = 16;
-                XMFLOAT2 prev = b0;
-                for (int s = 1; s <= samples; ++s) {
-                  float t = (float)s / (float)samples;
-                  XMFLOAT2 cur = bezier(b0, b1, b2, b3, t);
-                  if (testSegment(prev, cur) <= thr2) return true;
-                  prev = cur;
-                }
+              float seglen = len(sub(P1, P0));
+              float maxHandle = std::max(minHandle, seglen * clampK);
+              float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
+              float dirx1 = -dirx0;
+              T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
+              T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
+              XMFLOAT2 b0 = P0;
+              XMFLOAT2 b1 = addv(P0, mul(T0, 1.0f / 3.0f));
+              XMFLOAT2 b2 = sub(P1, mul(T1, 1.0f / 3.0f));
+              XMFLOAT2 b3 = P1;
+              const int samples = 16;
+              XMFLOAT2 prev = b0;
+              for (int s = 1; s <= samples; ++s) {
+                float t = (float)s / (float)samples;
+                XMFLOAT2 cur = bezier_eval(b0, b1, b2, b3, t);
+                if (testSegment(prev, cur) <= thr2) return true;
+                prev = cur;
               }
               return false;
             };
 
+            // Shared path (source -> hubs): build once and test once
+            wi::vector<XMFLOAT2> shared_pts;
+            shared_pts.push_back(srcpos);
+            for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
+              const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
+              shared_pts.push_back(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
+            }
+            if (shared_pts.size() >= 2) {
+              wi::vector<XMFLOAT2> compact;
+              compact.reserve(shared_pts.size());
+              auto near_eq = [](const XMFLOAT2& a, const XMFLOAT2& b){ float dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy <= 1.0f; };
+              for (const auto& sp : shared_pts) { if (compact.empty() || !near_eq(compact.back(), sp)) compact.push_back(sp); }
+              if (compact.size() >= 2) shared_pts = std::move(compact);
+            }
+
+            const float endpointBias = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
+
+            bool hit_shared = false;
+            for (size_t i = 0; i + 1 < shared_pts.size(); ++i) {
+              const XMFLOAT2& P0 = shared_pts[i];
+              const XMFLOAT2& P1 = shared_pts[i + 1];
+              XMFLOAT2 T0, T1;
+              if (i == 0) {
+                T0 = XMFLOAT2(+endpointBias, 0);
+              } else {
+                const XMFLOAT2& Pm1 = shared_pts[i - 1];
+                T0 = mul(sub(shared_pts[i + 1], Pm1), 0.5f);
+              }
+              if (i + 1 < shared_pts.size() - 1) {
+                const XMFLOAT2& Pp2 = shared_pts[i + 2];
+                T1 = mul(sub(Pp2, P0), 0.5f);
+              } else {
+                T1 = mul(sub(P1, P0), 0.5f);
+              }
+              if (hit_segment(P0, P1, T0, T1)) { hit_shared = true; break; }
+            }
+            if (hit_shared) { hit = crow; break; }
+
             if (hit) { selectedConnection = hit; break; }
             const std::string input_name = crow->input.GetText();
+            // Otherwise test only the final leg (last shared -> target) per target
+            const bool has_prev = shared_pts.size() >= 2;
+            const XMFLOAT2 shared_last = shared_pts.empty() ? srcpos : shared_pts.back();
+            const XMFLOAT2 shared_prev = has_prev ? shared_pts[shared_pts.size() - 2] : shared_last;
             for (const Node* target_node : targets) {
               const wi::gui::Label* target_input_label = nullptr;
+              size_t target_input_index = (size_t)-1;
               if (!input_name.empty()) {
-                for (const auto& ilbl_uptr : target_node->inputLabels) if (ilbl_uptr->GetText() == input_name) { target_input_label = ilbl_uptr.get(); break; }
-              }
-              XMFLOAT2 end(target_node->window.translation.x + 6.0f, target_input_label ? (target_input_label->translation.y + target_input_label->scale.y * 0.5f) : (target_node->window.translation.y + target_node->window.scale.y * 0.5f));
-              wi::vector<XMFLOAT2> pts;
-              pts.push_back(srcpos);
-              for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
-                const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
-                pts.push_back(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
-              }
-              pts.push_back(end);
-              if (pts.size() >= 2) {
-                wi::vector<XMFLOAT2> compact;
-                compact.reserve(pts.size());
-                auto near_eq = [](const XMFLOAT2& a, const XMFLOAT2& b){
-                  float dx = a.x - b.x, dy = a.y - b.y; return dx * dx + dy * dy <= 1.0f; };
-                for (const auto& p2 : pts) {
-                  if (compact.empty() || !near_eq(compact.back(), p2)) compact.push_back(p2);
+                if (target_node->GetInputIndex(input_name, target_input_index)) {
+                  target_input_label = target_node->inputLabels[target_input_index].get();
                 }
-                if (compact.size() >= 2) pts = std::move(compact);
               }
-              if (hit_chain(pts)) { hit = crow; break; }
+              float ex, ey;
+              if (target_input_label) {
+                if (target_input_index < target_node->cachedInputPins.size()) {
+                  ex = target_node->cachedInputPins[target_input_index].x; ey = target_node->cachedInputPins[target_input_index].y;
+                } else {
+                  ex = target_node->window.translation.x + 6.0f;
+                  ey = target_input_label->translation.y + target_input_label->scale.y * 0.5f;
+                }
+              } else {
+                ex = target_node->window.translation.x + 6.0f;
+                ey = target_node->window.translation.y + target_node->window.scale.y * 0.5f;
+              }
+              const float endpointBias2 = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
+              const XMFLOAT2 P0 = shared_last;
+              const XMFLOAT2 P1 = XMFLOAT2(ex, ey);
+              XMFLOAT2 T0, T1;
+              if (has_prev) {
+                T0 = mul(sub(P1, shared_prev), 0.5f);
+              } else {
+                T0 = XMFLOAT2(+endpointBias2, 0);
+              }
+              T1 = XMFLOAT2(-endpointBias2, 0);
+              if (hit_segment(P0, P1, T0, T1)) { hit = crow; break; }
             }
             if (hit) { selectedConnection = hit; break; }
           }
@@ -1190,6 +1225,7 @@ void NodeEditorWindow::AddNode() {
     lbl->SetText(inname);
     node->window.AddWidget(lbl.get());
     node->inputLabels.push_back(std::move(lbl));
+    node->inputIndex[inname] = node->inputLabels.size() - 1;
   }
   node->LayoutRows();
   layoutDirty = true;
@@ -1253,6 +1289,7 @@ void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& 
     lbl->SetText(inname);
     node->window.AddWidget(lbl.get());
     node->inputLabels.push_back(std::move(lbl));
+    node->inputIndex[inname] = node->inputLabels.size() - 1;
   }
   node->LayoutRows();
 
@@ -1304,6 +1341,8 @@ void NodeEditorWindow::Node::AddOutputRow(NodeEditorWindow* owner, const std::st
   window.AddWidget(&row->addButton);
 
   outputRows.push_back(std::move(row));
+  // update fast output index
+  outputIndex[outputName] = outputRows.back().get();
   if (owner) owner->layoutDirty = true;
   pinCacheDirty = true;
 }

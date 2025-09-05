@@ -1074,6 +1074,21 @@ namespace wi::gui
 		const wi::Canvas& canvas,
 		wi::graphics::CommandList cmd);
 
+	// Batched variant for drawing many wire segments efficiently.
+	// Usage:
+	//   BeginWireBatch(canvas, cmd);
+	//   AddWireBezierStripTangent(...); // repeated
+	//   FlushWireBatch();
+	void BeginWireBatch(const wi::Canvas& canvas, wi::graphics::CommandList cmd);
+	void AddWireBezierStripTangent(
+		const XMFLOAT2& from,
+		const XMFLOAT2& to,
+		const XMFLOAT2& tanFrom,
+		const XMFLOAT2& tanTo,
+		float thickness,
+		const XMFLOAT4& color);
+	void FlushWireBatch();
+
 }
 
 template<>

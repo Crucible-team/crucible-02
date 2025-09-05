@@ -49,6 +49,10 @@ public:
     bool pinCacheDirty = true; // set when node moves or layout changes
     XMFLOAT2 lastWindowPos = XMFLOAT2(FLT_MAX, FLT_MAX);
 
+    // Fast lookup indices for inputs/outputs (names are unique per node):
+    std::unordered_map<std::string, size_t> inputIndex;      // input name -> inputLabels index
+    std::unordered_map<std::string, OutputUI*> outputIndex;  // output name -> OutputUI*
+
     // Autosize helpers
     float measuredContentWidth = 0.0f;   // last measured required content width from LayoutRows()
     float autosizeShrinkTimer = 0.0f;    // accumulates dt while eligible to shrink
@@ -61,8 +65,26 @@ public:
     void RemoveConnectionRow(NodeEditorWindow* owner, ConnectionUI* row);
     void LayoutRows();
     void ComputePinCache();
+    void RebuildInputIndex() {
+      inputIndex.clear();
+      for (size_t i = 0; i < inputLabels.size(); ++i) {
+        if (inputLabels[i]) inputIndex[inputLabels[i]->GetText()] = i;
+      }
+    }
+    void RebuildOutputIndex() {
+      outputIndex.clear();
+      for (auto& r : outputRows) if (r) outputIndex[r->name] = r.get();
+    }
+    bool GetInputIndex(const std::string& name, size_t& out) const {
+      auto it = inputIndex.find(name);
+      if (it == inputIndex.end()) return false;
+      out = it->second;
+      return true;
+    }
     OutputUI* FindOutputRow(const std::string& outputName) {
-      for (auto& r : outputRows) if (r->name == outputName) return r.get();
+      auto it = outputIndex.find(outputName);
+      if (it != outputIndex.end()) return it->second;
+      for (auto& r : outputRows) if (r->name == outputName) return (outputIndex[r->name] = r.get());
       return nullptr;
     }
 
