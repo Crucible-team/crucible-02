@@ -597,6 +597,10 @@ The collider component will specify a collider shape to be used in simple fake p
 [[Header]](../../WickedEngine/wiScene_Components.h) [[Cpp]](../../WickedEngine/wiScene_Components.cpp)
 ScriptComponent can reference a lua script and run it every frame, while also providing some additional data to script like a local GetEntity() function. The script can be written to reference additional component data by using its unique GetEntity() function. A ScriptComponent can also call other scripts, which can be used to implement multiple scripts on one entity.
 
+#### EntityOutputsComponent
+[[Header]](../../WickedEngine/wiScene_Components.h)
+A simple serializable component to define Source-style entity outputs as rows. Each row contains: `event`, `target`, `input`, `parameter`, `delay` (seconds) and `once` (bool). Intended for Editor workflows to hook up entity events to actions. Not exposed to Lua at this time.
+
 #### Scene
 [[Header]](../../WickedEngine/wiScene.h) [[Cpp]](../../WickedEngine/wiScene.cpp)
 A scene is a collection of component arrays. The scene is updating all the components in an efficient manner using the [job system](#job-system). It can be serialized and saved/loaded from disk efficiently.

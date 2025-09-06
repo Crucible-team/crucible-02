@@ -48,7 +48,8 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	filterCombo.AddItem(ICON_VOXELGRID, (uint64_t)Filter::VoxelGrid);
 	filterCombo.AddItem(ICON_RIGIDBODY, (uint64_t)Filter::RigidBody);
 	filterCombo.AddItem(ICON_SOFTBODY, (uint64_t)Filter::SoftBody);
-	filterCombo.AddItem(ICON_METADATA, (uint64_t)Filter::Metadata);
+    filterCombo.AddItem(ICON_METADATA, (uint64_t)Filter::Metadata);
+    filterCombo.AddItem(ICON_OUTPUTS, (uint64_t)Filter::Outputs);
 	filterCombo.AddItem(ICON_VEHICLE, (uint64_t)Filter::Vehicle);
 	filterCombo.AddItem(ICON_CONSTRAINT, (uint64_t)Filter::Constraint);
 	filterCombo.AddItem(ICON_SPLINE, (uint64_t)Filter::Spline);
@@ -160,7 +161,8 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	spriteWnd.Create(editor);
 	fontWnd.Create(editor);
 	voxelGridWnd.Create(editor);
-	metadataWnd.Create(editor);
+    metadataWnd.Create(editor);
+    entityOutputsWnd.Create(editor);
 	constraintWnd.Create(editor);
 	splineWnd.Create(editor);
 
@@ -194,6 +196,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 		ADD_FONT,
 		ADD_VOXELGRID,
 		ADD_METADATA,
+		ADD_ENTITYOUTPUTS,
 		ADD_CONSTRAINT,
 		ADD_SPLINE,
 	};
@@ -233,6 +236,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	newComponentCombo.AddItem("Font " ICON_FONT, ADD_FONT);
 	newComponentCombo.AddItem("Voxel Grid " ICON_VOXELGRID, ADD_VOXELGRID);
 	newComponentCombo.AddItem("Metadata " ICON_METADATA, ADD_METADATA);
+    newComponentCombo.AddItem("Entity Outputs " ICON_OUTPUTS, ADD_ENTITYOUTPUTS);
 	newComponentCombo.AddItem("Constraint " ICON_CONSTRAINT, ADD_CONSTRAINT);
 	newComponentCombo.AddItem("Spline " ICON_SPLINE, ADD_SPLINE);
 	newComponentCombo.OnSelect([=](wi::gui::EventArgs args) {
@@ -370,6 +374,10 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 				if (scene.metadatas.Contains(entity))
 					valid = false;
 				break;
+			case ADD_ENTITYOUTPUTS:
+				if (scene.entityoutputs.Contains(entity))
+					valid = false;
+				break;
 			case ADD_CONSTRAINT:
 				if (scene.constraints.Contains(entity))
 					valid = false;
@@ -490,6 +498,9 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 			case ADD_METADATA:
 				scene.metadatas.Create(entity);
 				break;
+			case ADD_ENTITYOUTPUTS:
+				scene.entityoutputs.Create(entity);
+				break;
 			case ADD_CONSTRAINT:
 				scene.constraints.Create(entity);
 				break;
@@ -540,7 +551,8 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	AddWidget(&spriteWnd);
 	AddWidget(&fontWnd);
 	AddWidget(&voxelGridWnd);
-	AddWidget(&metadataWnd);
+    AddWidget(&metadataWnd);
+    AddWidget(&entityOutputsWnd);
 	AddWidget(&constraintWnd);
 	AddWidget(&splineWnd);
 
@@ -575,7 +587,8 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	spriteWnd.SetVisible(false);
 	fontWnd.SetVisible(false);
 	voxelGridWnd.SetVisible(false);
-	metadataWnd.SetVisible(false);
+    metadataWnd.SetVisible(false);
+    entityOutputsWnd.SetVisible(false);
 	constraintWnd.SetVisible(false);
 	splineWnd.SetVisible(false);
 
@@ -653,6 +666,19 @@ void ComponentsWindow::ResizeLayout()
 	else
 	{
 		nameWnd.SetVisible(false);
+	}
+
+	if (scene.entityoutputs.Contains(entityOutputsWnd.entity))
+	{
+		entityOutputsWnd.SetVisible(true);
+		entityOutputsWnd.SetPos(pos);
+		entityOutputsWnd.SetSize(XMFLOAT2(width, entityOutputsWnd.GetScale().y));
+		pos.y += entityOutputsWnd.GetSize().y;
+		pos.y += padding;
+	}
+	else
+	{
+		entityOutputsWnd.SetVisible(false);
 	}
 
 	if (scene.hierarchy.Contains(hierarchyWnd.entity))
@@ -1252,6 +1278,10 @@ void ComponentsWindow::PushToEntityTree(wi::ecs::Entity entity, int level)
 			{
 				item.name += ICON_METADATA " ";
 			}
+            if (scene.entityoutputs.Contains(entity))
+            {
+                item.name += ICON_OUTPUTS " ";
+            }
 			if (scene.constraints.Contains(entity))
 			{
 				item.name += ICON_CONSTRAINT " ";
@@ -1407,6 +1437,7 @@ bool ComponentsWindow::CheckEntityFilter(wi::ecs::Entity entity)
 		(has_flag(filter, Filter::RigidBody) && scene.rigidbodies.Contains(entity)) ||
 		(has_flag(filter, Filter::SoftBody) && scene.softbodies.Contains(entity)) ||
 		(has_flag(filter, Filter::Metadata) && scene.metadatas.Contains(entity)) ||
+		(has_flag(filter, Filter::Outputs) && scene.entityoutputs.Contains(entity)) ||
 		(has_flag(filter, Filter::Constraint) && scene.constraints.Contains(entity)) ||
 		(has_flag(filter, Filter::Spline) && scene.splines.Contains(entity)) ||
 		(has_flag(filter, Filter::Vehicle) && (scene.rigidbodies.Contains(entity) && scene.rigidbodies.GetComponent(entity)->IsVehicle()))

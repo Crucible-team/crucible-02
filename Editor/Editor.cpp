@@ -2702,9 +2702,10 @@ void EditorComponent::Update(float dt)
 		componentsWnd.terrainWnd.SetEntity(INVALID_ENTITY);
 		componentsWnd.spriteWnd.SetEntity(INVALID_ENTITY);
 		componentsWnd.fontWnd.SetEntity(INVALID_ENTITY);
-		componentsWnd.voxelGridWnd.SetEntity(INVALID_ENTITY);
-		componentsWnd.metadataWnd.SetEntity(INVALID_ENTITY);
-		componentsWnd.constraintWnd.SetEntity(INVALID_ENTITY);
+			componentsWnd.voxelGridWnd.SetEntity(INVALID_ENTITY);
+			componentsWnd.metadataWnd.SetEntity(INVALID_ENTITY);
+			componentsWnd.entityOutputsWnd.SetEntity(INVALID_ENTITY);
+			componentsWnd.constraintWnd.SetEntity(INVALID_ENTITY);
 	}
 	else
 	{
@@ -2738,9 +2739,10 @@ void EditorComponent::Update(float dt)
 		componentsWnd.terrainWnd.SetEntity(picked.entity);
 		componentsWnd.spriteWnd.SetEntity(picked.entity);
 		componentsWnd.fontWnd.SetEntity(picked.entity);
-		componentsWnd.voxelGridWnd.SetEntity(picked.entity);
-		componentsWnd.metadataWnd.SetEntity(picked.entity);
-		componentsWnd.constraintWnd.SetEntity(picked.entity);
+			componentsWnd.voxelGridWnd.SetEntity(picked.entity);
+			componentsWnd.metadataWnd.SetEntity(picked.entity);
+			componentsWnd.entityOutputsWnd.SetEntity(picked.entity);
+			componentsWnd.constraintWnd.SetEntity(picked.entity);
 
 		bool found_object = false;
 		bool found_mesh = false;
@@ -6066,6 +6068,7 @@ void EditorComponent::RefreshSceneList()
 			componentsWnd.fontWnd.SetEntity(wi::ecs::INVALID_ENTITY);
 			componentsWnd.voxelGridWnd.SetEntity(wi::ecs::INVALID_ENTITY);
 			componentsWnd.metadataWnd.SetEntity(wi::ecs::INVALID_ENTITY);
+			componentsWnd.entityOutputsWnd.SetEntity(wi::ecs::INVALID_ENTITY);
 			componentsWnd.constraintWnd.SetEntity(wi::ecs::INVALID_ENTITY);
 			componentsWnd.splineWnd.SetEntity(wi::ecs::INVALID_ENTITY);
 

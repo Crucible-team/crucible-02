@@ -33,6 +33,7 @@
 #include "MetadataWindow.h"
 #include "ConstraintWindow.h"
 #include "SplineWindow.h"
+#include "EntityOutputsWindow.h"
 
 class EditorComponent;
 
@@ -80,6 +81,7 @@ public:
 	MetadataWindow metadataWnd;
 	ConstraintWindow constraintWnd;
 	SplineWindow splineWnd;
+	EntityOutputsWindow entityOutputsWnd;
 
 	enum class Filter : uint64_t
 	{
@@ -115,6 +117,7 @@ public:
 		Vehicle = 1ull << 29ull,
 		Constraint = 1ull << 30ull,
 		Spline = 1ull << 31ull,
+        Outputs = 1ull << 32ull,
 
 		All = ~0ull,
 	} filter = Filter::All;
