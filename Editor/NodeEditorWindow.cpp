@@ -244,8 +244,16 @@ void NodeEditorWindow::BuildNodesFromSceneMetadata() {
             for (auto& crp : owner->connectionRows) {
               auto* cr = crp.get(); if (!cr) continue;
               std::string tgt = GetFieldText(cr->target);
-              if (tgt == nm) cr->targetEntity = e;
-              if ((tgt.empty() || tgt == "!self") && owner == existing) cr->targetEntity = e;
+              if (tgt == nm) {
+                cr->targetEntity = e;
+                // Normalize to the bound node's current name
+                cr->target.SetValue(nm);
+                cr->lastTarget = nm;
+              }
+              if ((tgt.empty() || tgt == "!self") && owner == existing) {
+                cr->targetEntity = e;
+                // Keep self semantics in text (do not overwrite "!self")
+              }
             }
           }
           // Sync component once to reflect existing connections for this node
@@ -321,7 +329,7 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
         bool self_target = false;
         for (auto& crow : n->connectionRows) {
           if (crow->outputName != orow->name) continue;
-          std::string tgt = crow->target.GetText();
+          std::string tgt = GetFieldText(crow->target);
           if (tgt.empty() || tgt == "!self") { self_target = true; break; }
         }
         if (self_target) {
@@ -1104,11 +1112,16 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
         for (auto& n : nodes) {
           for (auto& crow_uptr : n->connectionRows) {
             auto* crow = crow_uptr.get();
-            std::string target_text = crow->target.GetText();
+            std::string target_text = GetFieldText(crow->target);
             if (target_text == "!self" || target_text.empty()) continue;
             wi::vector<const Node*> targets;
-            if (auto itnode = nodeIndex.find(target_text); itnode != nodeIndex.end()) {
-              for (auto* cand : itnode->second) if (cand != n.get()) targets.push_back(cand);
+            if (crow->targetEntity != wi::ecs::INVALID_ENTITY) {
+              auto itent = entityIndex.find(crow->targetEntity);
+              if (itent != entityIndex.end() && itent->second != n.get()) targets.push_back(itent->second);
+            } else {
+              if (auto itnode = nodeIndex.find(target_text); itnode != nodeIndex.end()) {
+                for (auto* cand : itnode->second) if (cand != n.get()) targets.push_back(cand);
+              }
             }
             if (targets.empty()) continue;
 
@@ -1154,7 +1167,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             const bool has_prev = shared_pts.size() >= 2;
             const XMFLOAT2 shared_last = shared_pts.empty() ? srcpos : shared_pts.back();
             const XMFLOAT2 shared_prev = has_prev ? shared_pts[shared_pts.size() - 2] : shared_last;
-            const std::string input_name = crow->input.GetText();
+            const std::string input_name = GetFieldText(crow->input);
             for (const Node* target_node : targets) {
               const wi::gui::Label* target_input_label = nullptr;
               size_t target_input_index = (size_t)-1;
@@ -1347,11 +1360,16 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
           for (auto& crow_uptr : n->connectionRows) {
             auto* crow = crow_uptr.get();
             // Determine targets by index (support duplicates)
-            std::string target_text = crow->target.GetText();
+            std::string target_text = GetFieldText(crow->target);
             if (target_text == "!self" || target_text.empty()) continue;
             wi::vector<const Node*> targets;
-            if (auto itnode = nodeIndex.find(target_text); itnode != nodeIndex.end()) {
-              for (auto* cand : itnode->second) if (cand != n.get()) targets.push_back(cand);
+            if (crow->targetEntity != wi::ecs::INVALID_ENTITY) {
+              auto itent = entityIndex.find(crow->targetEntity);
+              if (itent != entityIndex.end() && itent->second != n.get()) targets.push_back(itent->second);
+            } else {
+              if (auto itnode = nodeIndex.find(target_text); itnode != nodeIndex.end()) {
+                for (auto* cand : itnode->second) if (cand != n.get()) targets.push_back(cand);
+              }
             }
             if (targets.empty()) continue;
 
@@ -1402,7 +1420,7 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
               if (d2 < conn_best2) conn_best2 = d2;
             }
             // Continue to test final legs per target and keep best distance
-            const std::string input_name = crow->input.GetText();
+            const std::string input_name = GetFieldText(crow->input);
             // Otherwise test only the final leg (last shared -> target) per target
             const bool has_prev = shared_pts.size() >= 2;
             const XMFLOAT2 shared_last = shared_pts.empty() ? srcpos : shared_pts.back();
@@ -2131,7 +2149,22 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   window.AddWidget(&row->removeButton);
 
   ConnectionUI* ret = row.get();
-  ret->uid = forced_uid ? forced_uid : (owner ? owner->nextConnUid++ : 0);
+  // Assign a unique connection UID. If a forced uid is provided but conflicts, pick the next available.
+  if (owner)
+  {
+    uint64_t candidate = forced_uid ? forced_uid : owner->nextConnUid;
+    if (candidate == 0) candidate = 1; // avoid zero uids
+    while (owner->FindConnection(candidate) != nullptr) {
+      // If forced uid collides, fall back to advancing the counter
+      candidate++;
+    }
+    ret->uid = candidate;
+    if (owner->nextConnUid <= ret->uid) owner->nextConnUid = ret->uid + 1;
+  }
+  else
+  {
+    ret->uid = forced_uid;
+  }
   ret->lastTarget = ret->target.GetValue();
   ret->lastInput = ret->input.GetValue();
   ret->lastParam = ret->param.GetValue();
@@ -2140,7 +2173,10 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   connectionRows.push_back(std::move(row));
   if (owner) owner->SetLayoutDirty();
   pinCacheDirty = true;
-  if (owner && this->type == Node::NodeType::EntityBound && !owner->suppressComponentSync) { owner->SyncEntityOutputsFromNode(this); PruneCustomEmptyOutputHeaders(owner); }
+  if (owner && this->type == Node::NodeType::EntityBound && !owner->suppressComponentSync) {
+    // Do not prune EntityBound output headers: class presets define them, even without connections
+    owner->SyncEntityOutputsFromNode(this);
+  }
   if (owner && owner->editor) {
     owner->editor->generalWnd.RefreshTheme();
   }
@@ -2545,6 +2581,18 @@ void NodeEditorWindow::RenameNode(Node* node, const std::string& newname) {
   node->window.SetName(newname);
   node->window.SetTitle(newname);
   nodeIndex[newname].push_back(node);
+
+  // If this node is bound to an entity, also update the scene NameComponent
+  if (editor && node->type == Node::NodeType::EntityBound && node->entity != wi::ecs::INVALID_ENTITY) {
+    auto& scene = editor->GetCurrentScene();
+    if (auto* nc = scene.names.GetComponent(node->entity)) {
+      if (nc->name != newname) nc->name = newname;
+    } else {
+      // ensure a name component exists
+      auto* nc2 = &scene.names.Create(node->entity);
+      nc2->name = newname;
+    }
+  }
 }
 
 
@@ -2825,6 +2873,24 @@ bool NodeEditorWindow::SerializeGraphToString(std::string& out, bool persist_ent
       cj["param"] = GetFieldText(cr->param);
       cj["delay"] = GetFieldText(cr->delay);
       cj["refire"] = GetFieldText(cr->refire);
+      // Provide explicit target node uid to make merges robust even with duplicates
+      uint64_t targetNodeUid = 0;
+      const std::string tgt_text = GetFieldText(cr->target);
+      if (tgt_text.empty() || tgt_text == "!self") {
+        targetNodeUid = n->uid;
+      } else {
+        const Node* target_node = nullptr;
+        if (cr->targetEntity != wi::ecs::INVALID_ENTITY) {
+          auto it = entityIndex.find(cr->targetEntity);
+          if (it != entityIndex.end()) target_node = it->second;
+        }
+        if (!target_node) {
+          auto itn = nodeIndex.find(tgt_text);
+          if (itn != nodeIndex.end() && !itn->second.empty()) target_node = itn->second.front();
+        }
+        if (target_node) targetNodeUid = target_node->uid;
+      }
+      if (targetNodeUid != 0) cj["targetNodeUid"] = targetNodeUid;
       json jh = json::array(); for (auto hid : cr->anchorHubIds) jh.push_back(hid); cj["hubs"] = jh;
       jconns.push_back(cj);
     }
@@ -2838,6 +2904,13 @@ bool NodeEditorWindow::SerializeGraphToString(std::string& out, bool persist_ent
           nj["entityName"] = nc2->name;
         } else {
           nj["entityName"] = n->name;
+        }
+        // Also persist entity class for reliable default output seeding during merges
+        if (auto* md2 = scene2.metadatas.GetComponent(n->entity)) {
+          try {
+            if (md2->string_values.has("class")) nj["entityClass"] = md2->string_values.get("class");
+            else if (md2->string_values.has("Class")) nj["entityClass"] = md2->string_values.get("Class");
+          } catch (...) {}
         }
       } else {
         nj["entityName"] = n->name;
@@ -2982,6 +3055,21 @@ bool NodeEditorWindow::LoadGraphFromString(const std::string& json_text)
           cr->lastTarget = cr->target.GetValue(); cr->lastInput = cr->input.GetValue(); cr->lastParam = cr->param.GetValue(); cr->lastDelay = cr->delay.GetValue();
           // hubs
           cr->anchorHubIds.clear(); if (cj.contains("hubs")) { for (auto& hx : cj["hubs"]) { uint32_t hid = hx.get<uint32_t>(); cr->anchorHubIds.push_back(hid); if (auto* h=GetHub(hid)) h->refcount++; } }
+          // Optional precise target by node uid
+          uint64_t tgtuid = 0; try { tgtuid = cj.value("targetNodeUid", (uint64_t)0); } catch (...) { tgtuid = 0; }
+          if (tgtuid != 0) {
+            auto itrm = node_uid_remap.find(tgtuid);
+            uint64_t mapped = (itrm != node_uid_remap.end()) ? itrm->second : tgtuid;
+            if (Node* tnode = FindNode(mapped)) {
+              if (tnode->entity != wi::ecs::INVALID_ENTITY) cr->targetEntity = tnode->entity;
+              // Preserve self marker if original text is self, else normalize to current name
+              const std::string curtxt = GetFieldText(cr->target);
+              if (!(curtxt.empty() || curtxt == "!self")) {
+                cr->target.SetValue(tnode->name);
+                cr->lastTarget = tnode->name;
+              }
+            }
+          }
         }
       }
       // Save entity name hint if present
@@ -3120,6 +3208,33 @@ bool NodeEditorWindow::LoadGraphFromString(const std::string& json_text)
       }
     }
 
+    // Normalize target text to the current bound node names when targetEntity is known
+    for (auto& np : nodes) {
+      Node* owner = np.get();
+      for (auto& crp : owner->connectionRows) {
+        auto* cr = crp.get(); if (!cr) continue;
+        if (cr->targetEntity == wi::ecs::INVALID_ENTITY) continue;
+        std::string curtxt = GetFieldText(cr->target);
+        // Preserve self marker if present
+        if (curtxt.empty() || curtxt == "!self") continue;
+        // Find node by entity
+        Node* targetNode = nullptr;
+        auto it = entityIndex.find(cr->targetEntity);
+        if (it != entityIndex.end()) targetNode = it->second;
+        if (!targetNode) {
+          // fallback search
+          for (auto& np2 : nodes) { if (np2->entity == cr->targetEntity) { targetNode = np2.get(); break; } }
+        }
+        if (targetNode) {
+          const std::string& norm = targetNode->name;
+          if (curtxt != norm) {
+            cr->target.SetValue(norm);
+            cr->lastTarget = norm;
+          }
+        }
+      }
+    }
+
     // Now that everything is rebound and targets resolved, write the loaded rows into components
     for (auto& np : nodes) {
       Node* n = np.get();
@@ -3134,6 +3249,460 @@ bool NodeEditorWindow::LoadGraphFromString(const std::string& json_text)
   layoutDirty = true; for (auto& n : nodes) n->pinCacheDirty = true;
   suppressComponentSync = prev_suppress;
   return true;
+}
+
+// Merge an additional graph into the current editor state without clearing it
+bool NodeEditorWindow::MergeGraphFromString(const std::string& json_text)
+{
+  using nlohmann::json;
+  json j;
+  try {
+    j = json::parse(json_text);
+  } catch (...) { return false; }
+
+  // Snapshot how many nodes were in the editor before this merge.
+  // We will only check conflicts against these existing graph nodes, not the whole scene.
+  const size_t pre_graph_node_count = nodes.size();
+
+  //  Merge hubs with ID remap to avoid conflicts
+  std::unordered_map<uint32_t, uint32_t> hub_id_remap; // old->new
+  if (j.contains("hubs")) {
+    for (auto& hj : j["hubs"]) {
+      uint32_t old_id = hj.value("id", 0u);
+      float px = hj["pos"].value("x", 0.0f);
+      float py = hj["pos"].value("y", 0.0f);
+      if (old_id == 0) continue;
+      uint32_t new_id = old_id;
+      if (hubs.find(new_id) != hubs.end()) {
+        // pick a fresh id
+        new_id = nextHubId;
+        while (hubs.find(new_id) != hubs.end()) ++new_id;
+      }
+      if (!GetHub(new_id)) {
+        RerouteHub h; h.id = new_id; h.pos = XMFLOAT2(px, py); h.refcount = 0; hubs[h.id] = h;
+      }
+      hub_id_remap[old_id] = new_id;
+      if (nextHubId <= new_id) nextHubId = new_id + 1;
+    }
+  }
+
+  // 2) Build entity name map for uniqueness checks
+  std::unordered_map<std::string, wi::ecs::Entity> entity_by_name;
+  if (editor) {
+    auto& scene = editor->GetCurrentScene();
+    const auto& arr = scene.names.GetEntityArray();
+    for (wi::ecs::Entity e : arr) {
+      if (auto* nc = scene.names.GetComponent(e)) entity_by_name[nc->name] = e;
+    }
+  }
+
+  // Helper: produce a unique entity name within scene names (ignore the provided entity)
+  auto unique_entity_name = [&](const std::string& base, wi::ecs::Entity exclude) {
+    if (!editor) return base;
+    auto it = entity_by_name.find(base);
+    if (it == entity_by_name.end() || it->second == exclude) return base;
+    int k = 2;
+    while (true) {
+      std::string cand = base + " (" + std::to_string(k) + ")";
+      auto it2 = entity_by_name.find(cand);
+      if (it2 == entity_by_name.end() || it2->second == exclude) return cand;
+      ++k;
+    }
+  };
+
+  // Helper: unique node name among existing nodes
+  auto unique_node_name = [&](const std::string& base) {
+    std::string n = base;
+    if (nodeIndex.find(n) == nodeIndex.end()) return n;
+    int k = 2;
+    while (true) {
+      std::string cand = base + " (" + std::to_string(k) + ")";
+      if (nodeIndex.find(cand) == nodeIndex.end()) return cand;
+      ++k;
+    }
+  };
+
+  // Helper: does any other entity (not exclude) have this name?
+  auto name_conflicts = [&](const std::string& nm, wi::ecs::Entity exclude) -> bool {
+    if (!editor) return false;
+    auto& scene = editor->GetCurrentScene();
+    const auto& arr = scene.names.GetEntityArray();
+    for (wi::ecs::Entity e : arr) {
+      if (e == exclude) continue;
+      if (auto* nc = scene.names.GetComponent(e)) { if (nc->name == nm) return true; }
+    }
+    return false;
+  };
+
+  // Track imported nodes and their original names for post-process bindings and normalization
+  struct ImportedNode { Node* node = nullptr; std::string originalName; std::string entityHint; std::string entityClass; };
+  wi::vector<ImportedNode> imported_nodes;
+  std::unordered_map<std::string, Node*> imported_name_map;
+  std::unordered_map<std::string, wi::vector<Node*>> imported_by_name;
+  std::unordered_map<uint64_t, Node*> imported_uid_to_node; // json old uid -> created Node*
+
+  //  Create nodes and connections
+  if (j.contains("nodes")) {
+    for (auto& nj : j["nodes"]) {
+      std::string name = nj.value("name", std::string("Node"));
+      uint64_t old_uid_json = 0; try { old_uid_json = nj.value("uid", (uint64_t)0); } catch(...) { old_uid_json = 0; }
+      // Create node UI
+      auto node = std::make_unique<Node>(name);
+      {
+        // fresh uid (ignore incoming)
+        node->uid = nextNodeUid++;
+      }
+      std::string type = nj.value("type", std::string("LogicOnly"));
+      node->type = (type == "EntityBound" ? Node::NodeType::EntityBound : Node::NodeType::LogicOnly);
+
+      node->window.Create(node->name,
+        Window::WindowControls::MOVE | Window::WindowControls::CLOSE | Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
+      node->window.SetSize(XMFLOAT2(NODE_MIN_CONTENT_W, 110));
+      node->label.Create(node->name); node->label.SetLocalizationEnabled(false); node->label.SetShadowRadius(0); node->label.SetText(node->name); node->label.SetPos(XMFLOAT2(4,4)); node->label.SetSize(XMFLOAT2(112,20));
+      node->window.AddWidget(&node->label);
+
+      // I/O lists
+      if (nj.contains("inputs")) for (auto& s : nj["inputs"]) node->inputs.push_back(s.get<std::string>());
+      if (nj.contains("outputs")) for (auto& s : nj["outputs"]) node->outputs.push_back(s.get<std::string>());
+
+      for (auto& outname : node->outputs) node->AddOutputRow(this, outname);
+      for (auto& inname : node->inputs) {
+        auto lbl = std::make_unique<wi::gui::Label>();
+        lbl->Create(inname); lbl->SetLocalizationEnabled(false); lbl->SetShadowRadius(0); lbl->SetText(inname);
+        node->window.AddWidget(lbl.get()); node->inputLabels.push_back(std::move(lbl)); node->inputIndex[inname] = node->inputLabels.size()-1;
+      }
+      node->LayoutRows();
+      AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
+      node->window.SetEnabled(true); node->window.SetVisible(true);
+
+      Node* raw = node.get();
+      node->window.OnClose([this, raw](wi::gui::EventArgs){ pendingRemoval.push_back(raw); });
+      nodes.push_back(std::move(node));
+      RegisterNode(nodes.back().get());
+      nodeIndex[nodes.back()->name].push_back(nodes.back().get());
+      if (old_uid_json != 0) imported_uid_to_node[old_uid_json] = nodes.back().get();
+
+      // Position/size
+      auto pj = nj["pos"]; float px = pj.value("x", nodes.back()->window.translation.x), py = pj.value("y", nodes.back()->window.translation.y);
+      auto sj = nj["size"]; float sw = sj.value("w", nodes.back()->window.scale.x), sh = sj.value("h", nodes.back()->window.scale.y);
+      nodes.back()->window.SetPos(XMFLOAT2(px, py)); nodes.back()->window.SetSize(XMFLOAT2(sw, sh));
+
+      // Allow duplicate names for EntityBound nodes (mirror NameComponent);
+      // for LogicOnly nodes, ensure unique name among nodes
+      if (nodes.back()->type == Node::NodeType::LogicOnly) {
+        auto itv = nodeIndex.find(nodes.back()->name);
+        if (itv != nodeIndex.end() && itv->second.size() > 1) {
+          std::string unique = MakeUniqueNodeName(nodes.back()->name);
+          if (unique != nodes.back()->name) RenameNode(nodes.back().get(), unique);
+        }
+      }
+
+      // For logic-only nodes, ensure default outputs are present from dynamic presets as well
+      if (nodes.back()->type == Node::NodeType::LogicOnly && editor) {
+        auto* nlogic = nodes.back().get();
+        // Base class name: strip trailing " (n)" suffix, if any
+        std::string basename = nlogic->name;
+        size_t p = basename.rfind('(');
+        if (p != std::string::npos && p > 1 && basename.back() == ')') {
+          // ensure it is a numeric suffix
+          bool num = true; for (size_t i = p + 1; i + 1 < basename.size(); ++i) if (!std::isdigit((unsigned char)basename[i])) { num = false; break; }
+          if (num && p >= 2 && basename[p-2] == ' ') basename = basename.substr(0, p-2);
+        }
+        auto itdef = editor->dynamicEntityDefaults.find(basename);
+        if (itdef != editor->dynamicEntityDefaults.end()) {
+          const auto& defs = itdef->second;
+          std::unordered_set<std::string> have;
+          for (auto& orw : nlogic->outputRows) have.insert(orw->name);
+          for (const auto& o : defs.node_outputs) {
+            nlogic->presetOutputs.insert(o);
+            if (have.find(o) == have.end()) { nlogic->outputs.push_back(o); nlogic->AddOutputRow(this, o); }
+          }
+          // Always include OnStart as preset for logic graph convenience
+          nlogic->presetOutputs.insert("OnStart");
+        }
+      }
+
+      // Connections
+      if (nj.contains("connections")) {
+        for (auto& cj : nj["connections"]) {
+          std::string outname = cj.value("outputName", std::string()); if (outname.empty()) continue;
+          uint64_t cuid = cj.value("uid", (uint64_t)0);
+          auto* cr = nodes.back()->AddConnectionRow(this, outname, cuid);
+          if (!cr) continue; RegisterConnection(nodes.back().get(), cr);
+          cr->target.SetValue(cj.value("target", std::string("!self")));
+          cr->targetEntity = wi::ecs::INVALID_ENTITY;
+          cr->input.SetValue(cj.value("input", std::string("FunctionName")));
+          cr->param.SetValue(cj.value("param", std::string("")));
+          cr->delay.SetValue(cj.value("delay", std::string("0.0")));
+          cr->refire.SetValue(cj.value("refire", std::string("-1")));
+          cr->lastRefire = cr->refire.GetValue();
+          cr->lastTarget = cr->target.GetValue(); cr->lastInput = cr->input.GetValue(); cr->lastParam = cr->param.GetValue(); cr->lastDelay = cr->delay.GetValue();
+          // hubs with remap
+          cr->anchorHubIds.clear(); if (cj.contains("hubs")) { for (auto& hx : cj["hubs"]) { uint32_t old = hx.get<uint32_t>(); uint32_t hid = old; if (hub_id_remap.count(old)) hid = hub_id_remap[old]; cr->anchorHubIds.push_back(hid); if (auto* h=GetHub(hid)) h->refcount++; } }
+          // If precise target uid is provided, resolve to created node
+          uint64_t tgtuid = 0; try { tgtuid = cj.value("targetNodeUid", (uint64_t)0); } catch(...) { tgtuid = 0; }
+          if (tgtuid != 0) {
+            Node* tnode = nullptr;
+            auto itim = imported_uid_to_node.find(tgtuid);
+            if (itim != imported_uid_to_node.end()) tnode = itim->second; else tnode = FindNode(tgtuid);
+            if (tnode) {
+              if (tnode->entity != wi::ecs::INVALID_ENTITY) cr->targetEntity = tnode->entity;
+              const std::string curtxt = GetFieldText(cr->target);
+              if (!(curtxt.empty() || curtxt == "!self")) { cr->target.SetValue(tnode->name); cr->lastTarget = tnode->name; }
+            }
+          }
+        }
+      }
+
+      // Entity hint (if any) from file to support robust rebind
+      std::string entityHint;
+      try { if (nj.contains("entityName")) entityHint = nj["entityName"].get<std::string>(); } catch (...) { entityHint.clear(); }
+      std::string entityClass;
+      try { if (nj.contains("entityClass")) entityClass = nj["entityClass"].get<std::string>(); } catch (...) { entityClass.clear(); }
+      std::string originalName = name;
+      imported_name_map[originalName] = nodes.back().get();
+      imported_by_name[originalName].push_back(nodes.back().get());
+      imported_nodes.push_back({ nodes.back().get(), originalName, entityHint, entityClass });
+    }
+  }
+
+  //  Bind imported nodes to entities and seed outputs
+  if (editor) {
+    auto& scene = editor->GetCurrentScene();
+    // Build name->entities multimap to handle duplicates, and track consumption per merge batch
+    std::unordered_map<std::string, wi::vector<wi::ecs::Entity>> ents_by_name;
+    const auto& arr = scene.names.GetEntityArray();
+    for (wi::ecs::Entity e : arr) {
+      if (auto* nc = scene.names.GetComponent(e)) ents_by_name[nc->name].push_back(e);
+    }
+    std::unordered_set<wi::ecs::Entity> consumed;
+    std::unordered_map<std::string, size_t> pick_index;
+
+    for (const ImportedNode& imp : imported_nodes) {
+      Node* n = imp.node; if (!n) continue;
+      if (n->type != Node::NodeType::EntityBound) continue;
+
+      // Prefer explicit entity hint; else use the group's original name
+      std::string desired = !imp.entityHint.empty() ? imp.entityHint : (!imp.originalName.empty() ? imp.originalName : n->name);
+
+      wi::ecs::Entity bound = wi::ecs::INVALID_ENTITY;
+      auto itvec = ents_by_name.find(desired);
+      if (itvec != ents_by_name.end() && !itvec->second.empty()) {
+        size_t& idx = pick_index[desired];
+        // find next unconsumed entity with this name
+        while (idx < itvec->second.size() && consumed.count(itvec->second[idx])) idx++;
+        if (idx < itvec->second.size()) {
+          bound = itvec->second[idx];
+          consumed.insert(bound);
+          idx++;
+        }
+      }
+
+      if (bound != wi::ecs::INVALID_ENTITY) {
+        n->entity = bound;
+        entityIndex[bound] = n;
+        // Persist mapping uid -> entity in metadata
+        if (auto* md = scene.metadatas.GetComponent(bound)) {
+          md->string_values.set("node_editor_uid", std::to_string(n->uid));
+        } else {
+          auto* md2 = &scene.metadatas.Create(bound);
+          md2->string_values.set("node_editor_uid", std::to_string(n->uid));
+        }
+
+        // Seed preset outputs from entity class if available; otherwise preserve existing outputs as preset
+        {
+          bool seeded_from_class = false;
+          if (auto* md = scene.metadatas.GetComponent(bound)) {
+            std::string classtype;
+            if (md->string_values.has("class")) classtype = md->string_values.get("class");
+            if (classtype.empty() && md->string_values.has("Class")) classtype = md->string_values.get("Class");
+            if (!classtype.empty()) {
+              auto itdef = editor->dynamicEntityDefaults.find(classtype);
+              if (itdef != editor->dynamicEntityDefaults.end()) {
+                for (auto& o : itdef->second.node_outputs) {
+                  n->presetOutputs.insert(o);
+                  if (!n->FindOutputRow(o)) { bool prev = suppressComponentSync; suppressComponentSync = true; n->AddOutputRow(this, o); suppressComponentSync = prev; }
+                }
+                n->LayoutRows();
+                seeded_from_class = true;
+              }
+            }
+          }
+          if (!seeded_from_class) {
+            for (auto& orw : n->outputRows) n->presetOutputs.insert(orw->name);
+            n->presetOutputs.insert("OnStart");
+            n->LayoutRows();
+          }
+        }
+      } else {
+        // Fallback: entity not found, but this node is EntityBound in the graph.
+        // Prefer class from JSON if available; otherwise treat as unknown and preserve JSON outputs.
+        bool seeded = false;
+        if (!imp.entityClass.empty()) {
+          auto itdef = editor->dynamicEntityDefaults.find(imp.entityClass);
+          if (itdef != editor->dynamicEntityDefaults.end()) {
+            std::unordered_set<std::string> have;
+            for (auto& orw : n->outputRows) have.insert(orw->name);
+            for (const auto& o : itdef->second.node_outputs) {
+              n->presetOutputs.insert(o);
+              if (have.find(o) == have.end()) { n->outputs.push_back(o); n->AddOutputRow(this, o); }
+            }
+            n->presetOutputs.insert("OnStart");
+            n->LayoutRows();
+            seeded = true;
+          }
+        }
+        if (!seeded) {
+          for (auto& orw : n->outputRows) n->presetOutputs.insert(orw->name);
+          n->presetOutputs.insert("OnStart");
+          n->LayoutRows();
+        }
+      }
+      // Always treat OnStart as preset
+      n->presetOutputs.insert("OnStart");
+    }
+  }
+
+  //  Group-wise rename: imported EntityBound nodes that shared the same original name
+  // keep the same final name across the group. If that original name conflicts with any
+  // pre-existing scene entity outside the group, choose a single unique variant for the group
+  // (e.g., "name (2)") and rename every entity in the group to that final name. This preserves
+  // fan-in/fan-out semantics of name-based targeting.
+  std::unordered_map<std::string, wi::vector<wi::ecs::Entity>> import_groups; // originalName -> entities
+  if (editor) {
+    for (const ImportedNode& imp : imported_nodes) {
+      Node* n = imp.node; if (!n) continue; if (n->type != Node::NodeType::EntityBound) continue; if (n->entity == wi::ecs::INVALID_ENTITY) continue;
+      import_groups[imp.originalName].push_back(n->entity);
+    }
+  }
+  std::unordered_map<std::string, std::string> group_final_name; // original -> final
+  if (editor && !import_groups.empty()) {
+    auto& scene = editor->GetCurrentScene();
+    // Helper to compute base name without numeric suffix
+    auto base_name = [](const std::string& s) -> std::string {
+      size_t p = s.rfind('(');
+      if (p == std::string::npos || p == 0 || s.empty() || s.back() != ')') return s;
+      bool num = true; for (size_t i = p + 1; i + 1 < s.size(); ++i) if (!std::isdigit((unsigned char)s[i])) { num = false; break; }
+      if (!num) return s;
+      if (p >= 2 && s[p - 2] == ' ') return s.substr(0, p - 2);
+      return s;
+    };
+
+    // Build base->maxSuffix from graph nodes that existed before this import
+    std::unordered_map<std::string, int> base_max;
+    for (size_t i = 0; i < pre_graph_node_count; ++i) {
+      Node* ex = nodes[i].get(); if (!ex) continue; if (ex->type != Node::NodeType::EntityBound) continue;
+      std::string nb = base_name(ex->name);
+      int suf = 1;
+      size_t p = ex->name.rfind('(');
+      if (p != std::string::npos && ex->name.back() == ')') {
+        try { suf = std::max(1, std::stoi(ex->name.substr(p + 1, ex->name.size() - p - 2))); } catch (...) { suf = 1; }
+      }
+      auto it = base_max.find(nb); if (it == base_max.end()) base_max[nb] = suf; else it->second = std::max(it->second, suf);
+    }
+
+    auto is_rename_locked = [&](wi::ecs::Entity e) -> bool {
+      auto* md = scene.metadatas.GetComponent(e);
+      if (!md) return false;
+      try {
+        if (md->bool_values.has("node_editor_lock_name")) return md->bool_values.get("node_editor_lock_name");
+      } catch (...) {}
+      return false;
+    };
+
+    for (auto& kv : import_groups) {
+      const std::string& original = kv.first;
+      const auto& ents = kv.second; if (ents.empty()) continue;
+      std::string b = base_name(original);
+      int next_suffix = 0; auto itm = base_max.find(b); if (itm != base_max.end()) next_suffix = itm->second;
+      std::string final = original;
+      // If any entity in the group requests lock, use its current name as final and don't rename that entity
+      wi::ecs::Entity locked_entity = wi::ecs::INVALID_ENTITY;
+      for (wi::ecs::Entity e : ents) { if (is_rename_locked(e)) { locked_entity = e; break; } }
+      if (locked_entity != wi::ecs::INVALID_ENTITY) {
+        if (auto* nc = scene.names.GetComponent(locked_entity)) final = nc->name; else final = original;
+      } else {
+        if (next_suffix >= 1) {
+          // base already present in current graph; assign next suffix for this whole group
+          int k = next_suffix + 1;
+          final = b + " (" + std::to_string(k) + ")";
+          // reserve this suffix for subsequent groups with the same base in this import
+          base_max[b] = k;
+        } else {
+          // reserve base as used now
+          base_max[b] = 1;
+        }
+      }
+      group_final_name[original] = final;
+      if (final != original) {
+        for (wi::ecs::Entity e : ents) {
+          if (is_rename_locked(e)) continue;
+          if (auto* nc = scene.names.GetComponent(e)) { if (nc->name != final) OnEntityRenamed(e, final); }
+          else { auto* nc2 = &scene.names.Create(e); nc2->name = final; OnEntityRenamed(e, final); }
+        }
+      }
+    }
+  }
+
+  // 5) Normalize name-only targets for imported nodes using the group rename map only
+  for (const ImportedNode& imp : imported_nodes) {
+    Node* owner = imp.node; if (!owner) continue;
+    // Skip retargeting for owners that are locked
+    if (editor && owner->type == Node::NodeType::EntityBound && owner->entity != wi::ecs::INVALID_ENTITY) {
+      auto& scene = editor->GetCurrentScene();
+      auto* md = scene.metadatas.GetComponent(owner->entity);
+      if (md) {
+        try { if (md->bool_values.has("node_editor_lock_name") && md->bool_values.get("node_editor_lock_name")) continue; } catch (...) {}
+      }
+    }
+    for (auto& crp : owner->connectionRows) {
+      auto* cr = crp.get(); if (!cr) continue;
+      std::string tgt = GetFieldText(cr->target);
+      if (tgt.empty() || tgt == "!self") { cr->targetEntity = owner->entity; continue; }
+      // Only adjust rows that are name-only and targeted an imported group's original name.
+      if (cr->targetEntity == wi::ecs::INVALID_ENTITY) {
+        auto itg = group_final_name.find(tgt);
+        if (itg != group_final_name.end() && itg->second != tgt) {
+          cr->target.SetValue(itg->second);
+          cr->lastTarget = itg->second;
+        }
+      }
+    }
+  }
+
+  //  Finalize: sync components for imported EntityBound nodes and refresh UI
+  for (const ImportedNode& imp : imported_nodes) {
+    Node* n = imp.node; if (!n) continue;
+    if (n->type == Node::NodeType::EntityBound && n->entity != wi::ecs::INVALID_ENTITY) {
+      SyncEntityOutputsFromNode(n);
+    }
+  }
+  if (editor) {
+    editor->componentsWnd.RefreshEntityTree();
+    // If the entity outputs inspector is open and pointing to one of the imported entities,
+    // its rows will refresh via SyncEntityOutputsFromNode; otherwise, a tree refresh is enough.
+  }
+  layoutDirty = true; for (auto& n : nodes) n->pinCacheDirty = true;
+  return true;
+}
+
+std::string NodeEditorWindow::MakeUniqueNodeName(const std::string& base) const
+{
+  if (nodeIndex.find(base) == nodeIndex.end()) return base;
+  int k = 2;
+  while (true) {
+    std::string cand = base + " (" + std::to_string(k) + ")";
+    if (nodeIndex.find(cand) == nodeIndex.end()) return cand;
+    ++k;
+  }
+}
+
+bool NodeEditorWindow::MergeGraph(const std::string& path)
+{
+  std::ifstream ifs(path, std::ios::binary);
+  if (!ifs.good()) return false;
+  std::string text((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+  return MergeGraphFromString(text);
 }
 bool NodeEditorWindow::LoadGraph(const std::string& path)
 {

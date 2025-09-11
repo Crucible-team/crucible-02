@@ -11,7 +11,7 @@ public:
   void BuildNodesFromSceneMetadata();
   void SetLayoutDirty() { layoutDirty = true; }
   // Public helper to add a single entity's node to the graph
-  void AddEntityToGraph(wi::ecs::Entity entity);
+  //void AddEntityToGraph(wi::ecs::Entity entity);
 
   struct Node {
     enum class NodeType { LogicOnly, EntityBound };

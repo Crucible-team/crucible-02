@@ -1102,7 +1102,7 @@ void EditorComponent::Load()
                     }
 
                     // Automatically add this entity to the Node Editor graph
-                    nodeEditorWnd.AddEntityToGraph(pick.entity);
+                    //nodeEditorWnd.AddEntityToGraph(pick.entity);
 
 				}
 			}
@@ -5491,8 +5491,8 @@ void EditorComponent::Open(std::string filename)
 				{
 					if (wi::helper::FileExists(path))
 					{
-						// Load the node graph; it will rebind to entities via Metadata (node_editor_uid)
-						nodeEditorWnd.LoadGraph(path);
+						// Merge the node graph; it will rebind to entities via Metadata (node_editor_uid)
+						nodeEditorWnd.MergeGraph(path);
 						break;
 					}
 				}
