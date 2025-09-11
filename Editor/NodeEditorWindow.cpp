@@ -109,7 +109,80 @@ void NodeEditorWindow::BuildNodesFromSceneMetadata() {
     if (entityIndex.find(e) != entityIndex.end()) continue;
     std::string nm;
     if (auto* nc = scene.names.GetComponent(e)) nm = nc->name; else nm = std::to_string((uint64_t)e);
-    AddNodeForEntity(e, nm);
+
+	std::string classtype;
+	if (auto* md = scene.metadatas.GetComponent(e))
+	{
+		
+		if (md->string_values.has("class"))
+			classtype = md->string_values.get("class");
+		if (md->string_values.has("Class"))
+			classtype = md->string_values.get("Class");
+	}
+
+    // First, if a node already exists with this entity's name (from loaded graph), bind it
+    if (!nm.empty()) {
+      auto itnodes = nodeIndex.find(nm);
+      if (itnodes != nodeIndex.end() && !itnodes->second.empty()) {
+        Node* existing = itnodes->second.front();
+        if (existing && existing->entity == wi::ecs::INVALID_ENTITY) {
+          existing->entity = e;
+          existing->type = Node::NodeType::EntityBound;
+          entityIndex[e] = existing;
+          if (auto* md = scene.metadatas.GetComponent(e)) {
+            md->string_values.set("node_editor_uid", std::to_string(existing->uid));
+          }
+          // Seed non-removable (preset) outputs from class preset if available
+          if (!classtype.empty()) {
+            auto itdef = editor->dynamicEntityDefaults.find(classtype);
+            if (itdef != editor->dynamicEntityDefaults.end()) {
+              for (const auto& o : itdef->second.node_outputs) {
+                existing->presetOutputs.insert(o);
+                // Ensure a header exists for preset outputs without altering component sync
+                if (!existing->FindOutputRow(o)) {
+                  bool prev_sup = suppressComponentSync; suppressComponentSync = true;
+                  existing->AddOutputRow(this, o);
+                  suppressComponentSync = prev_sup;
+                }
+              }
+            }
+          }
+          // Always treat OnStart as preset
+          existing->presetOutputs.insert("OnStart");
+          // Try resolve connection target entities that refer to this node by name
+          for (auto& np : nodes) {
+            Node* owner = np.get();
+            for (auto& crp : owner->connectionRows) {
+              auto* cr = crp.get(); if (!cr) continue;
+              std::string tgt = GetFieldText(cr->target);
+              if (tgt == nm) cr->targetEntity = e;
+              if ((tgt.empty() || tgt == "!self") && owner == existing) cr->targetEntity = e;
+            }
+          }
+          // Sync component once to reflect existing connections for this node
+          SyncEntityOutputsFromNode(existing);
+          continue; // don't add another node for this entity
+        }
+      }
+    }
+
+    // Import if we have a known class preset, or if the entity already has an Outputs component
+    bool canAddByClass = false;
+    if (!classtype.empty())
+    {
+      auto it = editor->dynamicEntityDefaults.find(classtype);
+      canAddByClass = (it != editor->dynamicEntityDefaults.end());
+    }
+    bool hasOutputs = scene.entityoutputs.GetComponent(e) != nullptr;
+    // Only skip if neither a preset nor existing outputs are present
+    if (!canAddByClass && !hasOutputs)
+      continue;
+    // Ensure outputs component exists so node can sync back later
+    if (!hasOutputs) {
+      scene.entityoutputs.Create(e);
+    }
+    AddNodeForEntity(e, nm, classtype);
+    
   }
   recentlyAddedNewNode = true;
   layoutDirty = true;
@@ -857,6 +930,9 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             drag.movingConnection->lastTarget = newTarget;
             drag.movingConnection->lastInput = newInput;
             drag.movingOwner->LayoutRows();
+            if (drag.movingOwner && drag.movingOwner->type == Node::NodeType::EntityBound) {
+              SyncEntityOutputsFromNode(drag.movingOwner);
+            }
             selectedConnection = drag.movingConnection;
           }
           baseRow = drag.movingConnection;
@@ -868,13 +944,18 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             crow->input.SetValue(newInput);
             crow->param.SetValue("");
             crow->delay.SetValue("0.0");
+            crow->refire.SetValue("-1");
             // Initialize last-committed mirrors to these values so next edit undo works
             crow->lastTarget = newTarget;
             crow->lastInput = newInput;
             crow->lastParam = "";
             crow->lastDelay = "0.0";
+            crow->lastRefire = "-1";
             selectedConnection = crow;
             drag.srcNode->LayoutRows();
+            if (drag.srcNode && drag.srcNode->type == Node::NodeType::EntityBound) {
+              SyncEntityOutputsFromNode(drag.srcNode);
+            }
             // Queue AddConnection for base row; if not from hub, push immediately
             deferredBaseAdd.type = UndoType::AddConnection; deferredBaseAdd.snap = MakeSnapshot(drag.srcNode, crow);
             if (drag.fromAnchor && anchorRight.conn && anchorRight.index >= 0 && anchorRight.index < (int)anchorRight.conn->anchorHubIds.size()) {
@@ -937,14 +1018,19 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
                 crow2->input.SetValue(newInput);
                 crow2->param.SetValue(newParam);
                 crow2->delay.SetValue(newDelay);
+                crow2->refire.SetValue("-1");
                 crow2->lastTarget = newTarget;
                 crow2->lastInput = newInput;
                 crow2->lastParam = newParam;
                 crow2->lastDelay = newDelay;
+                crow2->lastRefire = "-1";
                 // Bind to shared hub
                 crow2->anchorHubIds.push_back(groupHub);
                 if (auto* h = GetHub(groupHub)) { h->refcount++; }
                 owner2->LayoutRows();
+                if (owner2->type == Node::NodeType::EntityBound) {
+                  SyncEntityOutputsFromNode(owner2);
+                }
                 // Queue AddConnection on owner2 into macro
                 UndoCommand cmd; cmd.type = UndoType::AddConnection; cmd.snap = MakeSnapshot(owner2, crow2);
                 macro.macro.push_back(std::move(cmd));
@@ -1730,6 +1816,7 @@ void NodeEditorWindow::AddNode() {
   node->window.AddWidget(&node->label);
 
   // Seed example I/O sets (visual only). You can populate from Lua later.
+  node->presetOutputs.insert("OnStart");
   node->outputs.push_back("OnStart");
   // Example inputs (function names)
   node->inputs.push_back("Enable");
@@ -1776,7 +1863,7 @@ void NodeEditorWindow::AddNode() {
   ResizeLayout();
 }
 
-void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& name) {
+void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& name, const std::string& classtype) {
   if (ent == wi::ecs::INVALID_ENTITY) return;
   if (entityIndex.find(ent) != entityIndex.end()) return;
 
@@ -1799,10 +1886,31 @@ void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& 
   node->label.SetSize(XMFLOAT2(112, 20));
   node->window.AddWidget(&node->label);
 
-  // Seed I/O sets (can be customized by Lua later)
-  node->outputs.push_back("OnStart");
-  node->inputs.push_back("Enable");
-  node->inputs.push_back("Disable");
+
+  if (editor)
+  {
+      try {
+        auto Default = editor->dynamicEntityDefaults.at(classtype);
+        node->outputs = Default.node_outputs;
+        node->inputs = Default.node_inputs;
+		for (auto& o : node->outputs) node->presetOutputs.insert(o);
+      } catch (const std::out_of_range&) {
+        wi::backlog::post("Dynamic Entity preset not found ", wi::backlog::LogLevel::Error);
+      }
+  }
+
+  if (node->outputs.empty())
+	  node->outputs.push_back("OnStart");
+  node->presetOutputs.insert("OnStart");
+  for (auto& o : node->outputs) node->presetOutputs.insert(o);
+
+  if (node->inputs.empty())
+  {
+	  node->inputs.push_back("Enable");
+	  node->inputs.push_back("Disable");
+  }
+  // Avoid component write-back while programmatically building UI
+  bool prev_suppress = suppressComponentSync; suppressComponentSync = true;
   for (auto& outname : node->outputs) node->AddOutputRow(this, outname);
   for (auto& inname : node->inputs) {
     auto lbl = std::make_unique<wi::gui::Label>();
@@ -1815,6 +1923,9 @@ void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& 
     node->inputIndex[inname] = node->inputLabels.size() - 1;
   }
   node->LayoutRows();
+  // Populate any existing EntityOutputsComponent bindings into connection rows
+  PopulateConnectionsFromComponent(node.get());
+  suppressComponentSync = prev_suppress;
 
   AddWidget(&node->window, wi::gui::Window::AttachmentOptions::SCROLLABLE);
   node->window.SetEnabled(true);
@@ -1832,12 +1943,127 @@ void NodeEditorWindow::AddNodeForEntity(wi::ecs::Entity ent, const std::string& 
   nodes.push_back(std::move(node));
   RegisterNode(nodes.back().get());
   nodeIndex[raw->name].push_back(raw);
+  // Persist node uid to entity metadata for stable mapping across saves/loads
+  if (editor) {
+    wi::scene::Scene& scene = editor->GetCurrentScene();
+    auto* md = scene.metadatas.GetComponent(ent);
+    if (!md) md = &scene.metadatas.Create(ent);
+    if (md) {
+      md->string_values.set("node_editor_uid", std::to_string(raw->uid));
+    }
+  }
   // Center the newly added node like AddNode()
   recentlyAddedNewNode = true;
   lastAddedNode = raw;
   ResizeLayout();
   layoutDirty = true;
   raw->pinCacheDirty = true;
+}
+
+// Build connection rows for an EntityBound node from its EntityOutputsComponent
+void NodeEditorWindow::PopulateConnectionsFromComponent(Node* node)
+{
+  if (!node || node->type != Node::NodeType::EntityBound || !editor) return;
+  wi::scene::Scene& scene = editor->GetCurrentScene();
+  auto* comp = scene.entityoutputs.GetComponent(node->entity);
+  if (!comp) return;
+  bool prev_suppress = suppressComponentSync;
+  suppressComponentSync = true;
+
+  // Add any missing output headers from component; never remove existing
+  std::unordered_set<std::string> existing;
+  for (const auto& p : node->outputRows) existing.insert(p->name);
+  for (const auto& ob : comp->outputs) {
+    if (existing.find(ob.event) == existing.end()) {
+      node->outputs.push_back(ob.event);
+      node->AddOutputRow(this, ob.event);
+      existing.insert(ob.event);
+    }
+  }
+
+  // Re-create connection rows from component bindings
+  for (const auto& ob : comp->outputs) {
+    auto* cr = node->AddConnectionRow(this, ob.event);
+    if (!cr) continue;
+    cr->target.SetValue(ob.target.empty() ? std::string("!self") : ob.target);
+    cr->input.SetValue(ob.input);
+    cr->param.SetValue(ob.parameter);
+    cr->delay.SetValue(std::to_string(ob.delay));
+    cr->refire.SetValue(std::to_string(ob.refire));
+    cr->lastTarget = cr->target.GetValue();
+    cr->lastInput  = cr->input.GetValue();
+    cr->lastParam  = cr->param.GetValue();
+    cr->lastDelay  = cr->delay.GetValue();
+    cr->lastRefire = cr->refire.GetValue();
+  }
+  node->LayoutRows();
+  suppressComponentSync = prev_suppress;
+}
+
+void NodeEditorWindow::RefreshNodeFromOutputsComponent(wi::ecs::Entity ent)
+{
+  if (!editor) return;
+  auto it = entityIndex.find(ent);
+  if (it == entityIndex.end()) return;
+  Node* node = it->second;
+  if (!node) return;
+  bool prev_suppress = suppressComponentSync; suppressComponentSync = true;
+
+  // Clear all existing connection rows
+  {
+    wi::vector<Node::ConnectionUI*> toremove;
+    toremove.reserve(node->connectionRows.size());
+    for (auto& cr : node->connectionRows) toremove.push_back(cr.get());
+    for (auto* r : toremove) node->RemoveConnectionRow(this, r);
+  }
+  // Keep existing output pins; only rebuild connections from component
+  PopulateConnectionsFromComponent(node);
+
+  node->pinCacheDirty = true;
+  layoutDirty = true;
+  if (editor) editor->generalWnd.RefreshTheme();
+  suppressComponentSync = prev_suppress;
+}
+
+// Write the connection rows of an EntityBound node back into its EntityOutputsComponent
+void NodeEditorWindow::SyncEntityOutputsFromNode(Node* node)
+{
+  if (!node || node->type != Node::NodeType::EntityBound || !editor) return;
+  if (node->entity == wi::ecs::INVALID_ENTITY) return;
+  wi::scene::Scene& scene = editor->GetCurrentScene();
+  wi::scene::EntityOutputsComponent* comp = scene.entityoutputs.GetComponent(node->entity);
+  if (!comp)
+  {
+    comp = &scene.entityoutputs.Create(node->entity);
+  }
+
+  
+  // Build component outputs directly from connection rows; allow clearing when there are no rows
+  wi::vector<wi::scene::EntityOutputsComponent::OutputBinding> newOutputs;
+  newOutputs.reserve(node->connectionRows.size());
+  for (const auto& cr_uptr : node->connectionRows)
+  {
+    const auto* cr = cr_uptr.get(); if (!cr) continue;
+    wi::scene::EntityOutputsComponent::OutputBinding ob;
+    ob.event = cr->outputName;
+    std::string tgt = GetFieldText(cr->target);
+    if (tgt == "!self") tgt.clear();
+    ob.target = tgt;
+    ob.input = GetFieldText(cr->input);
+    ob.parameter = GetFieldText(cr->param);
+    ob.delay = 0.0f; try { ob.delay = std::stof(GetFieldText(cr->delay)); } catch (...) {}
+    ob.refire = -1; try { ob.refire = std::stoi(GetFieldText(cr->refire)); } catch (...) {}
+    newOutputs.push_back(std::move(ob));
+  }
+  comp->outputs = std::move(newOutputs);
+
+  // If the Components->Outputs window is currently showing this entity, refresh it
+  if (editor) {
+    auto& wnd = editor->componentsWnd.entityOutputsWnd;
+    if (wnd.entity == node->entity) {
+      wnd.RefreshRows();
+    }
+  }
 }
 
 // ----- Node UI helpers -----
@@ -1864,14 +2090,20 @@ void NodeEditorWindow::Node::AddOutputRow(NodeEditorWindow* owner, const std::st
     if (owner && owner->editor) {
       owner->editor->generalWnd.RefreshTheme();
     }
+    if (owner && this->type == NodeType::EntityBound && !owner->suppressComponentSync) {
+      owner->SyncEntityOutputsFromNode(this);
+    }
   });
   window.AddWidget(&row->addButton);
 
   outputRows.push_back(std::move(row));
   // update fast output index
   outputIndex[outputName] = outputRows.back().get();
-  if (owner) owner->layoutDirty = true;
+  if (owner) owner->SetLayoutDirty();
   pinCacheDirty = true;
+  if (owner && this->type == Node::NodeType::EntityBound && !owner->suppressComponentSync) {
+    owner->SyncEntityOutputsFromNode(this);
+  }
 }
 
 NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(NodeEditorWindow* owner, const std::string& outputName, uint64_t forced_uid) {
@@ -1892,12 +2124,16 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   row->target.OnInputAccepted([this, owner, ptr=row.get()](wi::gui::EventArgs){
     if (owner) {
       NodeEditorWindow::UndoCommand cmd; cmd.type = NodeEditorWindow::UndoType::EditConnection;
-      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
-      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->target.GetValue(), ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
+      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->lastRefire, ptr->anchorHubIds };
+      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->target.GetValue(), ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->lastRefire, ptr->anchorHubIds };
       owner->PushCommand(std::move(cmd));
       ptr->lastTarget = ptr->target.GetValue();
     }
-    if(owner) owner->layoutDirty = true; this->needsLayout = true; });
+    if(owner) owner->layoutDirty = true; this->needsLayout = true;
+    if (owner && this->type == NodeType::EntityBound && !owner->suppressComponentSync) {
+      owner->SyncEntityOutputsFromNode(this);
+    }
+  });
   window.AddWidget(&row->target);
 
   row->input.Create("Input");
@@ -1907,12 +2143,16 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   row->input.OnInputAccepted([this, owner, ptr=row.get()](wi::gui::EventArgs){
     if (owner) {
       NodeEditorWindow::UndoCommand cmd; cmd.type = NodeEditorWindow::UndoType::EditConnection;
-      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
-      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->input.GetValue(), ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
+      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->lastRefire, ptr->anchorHubIds };
+      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->input.GetValue(), ptr->lastParam, ptr->lastDelay, ptr->lastRefire, ptr->anchorHubIds };
       owner->PushCommand(std::move(cmd));
       ptr->lastInput = ptr->input.GetValue();
     }
-    if(owner) owner->layoutDirty = true; this->needsLayout = true; });
+    if(owner) owner->layoutDirty = true; this->needsLayout = true;
+    if (owner && this->type == NodeType::EntityBound && !owner->suppressComponentSync) {
+      owner->SyncEntityOutputsFromNode(this);
+    }
+  });
   window.AddWidget(&row->input);
 
   row->param.Create("Param");
@@ -1922,12 +2162,16 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   row->param.OnInputAccepted([this, owner, ptr=row.get()](wi::gui::EventArgs){
     if (owner) {
       NodeEditorWindow::UndoCommand cmd; cmd.type = NodeEditorWindow::UndoType::EditConnection;
-      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
-      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->param.GetValue(), ptr->lastDelay, ptr->anchorHubIds };
+      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->lastRefire, ptr->anchorHubIds };
+      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->param.GetValue(), ptr->lastDelay, ptr->lastRefire, ptr->anchorHubIds };
       owner->PushCommand(std::move(cmd));
       ptr->lastParam = ptr->param.GetValue();
     }
-    if(owner) owner->layoutDirty = true; this->needsLayout = true; });
+    if(owner) owner->layoutDirty = true; this->needsLayout = true;
+    if (owner && this->type == NodeType::EntityBound && !owner->suppressComponentSync) {
+      owner->SyncEntityOutputsFromNode(this);
+    }
+  });
   window.AddWidget(&row->param);
 
   row->delay.Create("Delay");
@@ -1937,13 +2181,37 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   row->delay.OnInputAccepted([this, owner, ptr=row.get()](wi::gui::EventArgs){
     if (owner) {
       NodeEditorWindow::UndoCommand cmd; cmd.type = NodeEditorWindow::UndoType::EditConnection;
-      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->anchorHubIds };
-      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->delay.GetValue(), ptr->anchorHubIds };
+      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->lastRefire, ptr->anchorHubIds };
+      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->delay.GetValue(), ptr->lastRefire, ptr->anchorHubIds };
       owner->PushCommand(std::move(cmd));
       ptr->lastDelay = ptr->delay.GetValue();
     }
-    if(owner) owner->layoutDirty = true; this->needsLayout = true; });
+    if(owner) owner->layoutDirty = true; this->needsLayout = true;
+    if (owner && this->type == NodeType::EntityBound && !owner->suppressComponentSync) {
+      owner->SyncEntityOutputsFromNode(this);
+    }
+  });
   window.AddWidget(&row->delay);
+
+  // Refire count (-1 = infinite)
+  row->refire.Create("Refire");
+  row->refire.SetLocalizationEnabled(false);
+  row->refire.SetShadowRadius(0);
+  row->refire.SetValue("-1");
+  row->refire.OnInputAccepted([this, owner, ptr=row.get()](wi::gui::EventArgs){
+    if (owner) {
+      NodeEditorWindow::UndoCommand cmd; cmd.type = NodeEditorWindow::UndoType::EditConnection;
+      cmd.before = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->lastRefire, ptr->anchorHubIds };
+      cmd.after  = { this->uid, ptr->uid, ptr->outputName, ptr->lastTarget, ptr->lastInput, ptr->lastParam, ptr->lastDelay, ptr->refire.GetValue(), ptr->anchorHubIds };
+      owner->PushCommand(std::move(cmd));
+      ptr->lastRefire = ptr->refire.GetValue();
+    }
+    if(owner) owner->layoutDirty = true; this->needsLayout = true;
+    if (owner && this->type == NodeType::EntityBound && !owner->suppressComponentSync) {
+      owner->SyncEntityOutputsFromNode(this);
+    }
+  });
+  window.AddWidget(&row->refire);
 
   row->removeButton.Create("x");
   row->removeButton.SetLocalizationEnabled(false);
@@ -1957,9 +2225,10 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
       s.outputName = ptr->outputName;
       s.target = GetFieldText(ptr->target);
       s.input = GetFieldText(ptr->input);
-      s.param = GetFieldText(ptr->param);
-      s.delay = GetFieldText(ptr->delay);
-      s.hubIds = ptr->anchorHubIds;
+  s.param = GetFieldText(ptr->param);
+  s.delay = GetFieldText(ptr->delay);
+  s.refire = GetFieldText(ptr->refire);
+  s.hubIds = ptr->anchorHubIds;
       NodeEditorWindow::UndoCommand cmd;
       cmd.type = NodeEditorWindow::UndoType::RemoveConnection;
       cmd.snap = s;
@@ -1976,9 +2245,11 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
   ret->lastInput = ret->input.GetValue();
   ret->lastParam = ret->param.GetValue();
   ret->lastDelay = ret->delay.GetValue();
+  ret->lastRefire = ret->refire.GetValue();
   connectionRows.push_back(std::move(row));
-  if (owner) owner->layoutDirty = true;
+  if (owner) owner->SetLayoutDirty();
   pinCacheDirty = true;
+  if (owner && this->type == Node::NodeType::EntityBound && !owner->suppressComponentSync) { owner->SyncEntityOutputsFromNode(this); PruneCustomEmptyOutputHeaders(owner); }
   if (owner && owner->editor) {
     owner->editor->generalWnd.RefreshTheme();
   }
@@ -1988,18 +2259,25 @@ NodeEditorWindow::Node::ConnectionUI* NodeEditorWindow::Node::AddConnectionRow(N
 
 void NodeEditorWindow::Node::RemoveConnectionRow(NodeEditorWindow* owner, ConnectionUI* row) {
   if (!row) return;
+  // Clear selection/hover to avoid dangling pointers referencing this row
+  if (owner) {
+    if (owner->selectedConnection == row) owner->selectedConnection = nullptr;
+    if (owner->hoveredConnection == row) owner->hoveredConnection = nullptr;
+  }
   // Remove widgets from window
   window.RemoveWidget(&row->outLabel);
   window.RemoveWidget(&row->target);
   window.RemoveWidget(&row->input);
   window.RemoveWidget(&row->param);
   window.RemoveWidget(&row->delay);
+  window.RemoveWidget(&row->refire);
   window.RemoveWidget(&row->removeButton);
   row->outLabel.Detach();
   row->target.Detach();
   row->input.Detach();
   row->param.Detach();
   row->delay.Detach();
+  row->refire.Detach();
   row->removeButton.Detach();
 
   
@@ -2013,10 +2291,101 @@ void NodeEditorWindow::Node::RemoveConnectionRow(NodeEditorWindow* owner, Connec
     if (auto* h = owner->GetHub(hid)) { if (h->refcount > 0) h->refcount--; }
     owner->DeleteHubIfUnreferenced(hid);
   }
-  if (owner) owner->layoutDirty = true;
+  if (owner) owner->SetLayoutDirty();
   pinCacheDirty = true;
+  if (owner && this->type == Node::NodeType::EntityBound && !owner->suppressComponentSync) { owner->SyncEntityOutputsFromNode(this); PruneCustomEmptyOutputHeaders(owner); }
 }
 
+
+bool NodeEditorWindow::Node::IsPresetOutput(const std::string& name) const
+{
+  return presetOutputs.find(name) != presetOutputs.end();
+}
+
+void NodeEditorWindow::Node::RemoveOutputHeader(NodeEditorWindow* owner, const std::string& outputName)
+{
+  if (IsPresetOutput(outputName)) return;
+  for (auto& cr : connectionRows) if (cr->outputName == outputName) return;
+  OutputUI* ui = FindOutputRow(outputName);
+  if (!ui) return;
+  window.RemoveWidget(&ui->label);
+  window.RemoveWidget(&ui->addButton);
+  ui->label.Detach();
+  ui->addButton.Detach();
+  for (auto it = outputRows.begin(); it != outputRows.end(); ++it) { if (it->get() == ui) { outputRows.erase(it); break; } }
+  outputIndex.erase(outputName);
+  for (auto it = outputs.begin(); it != outputs.end(); ++it) { if (*it == outputName) { outputs.erase(it); break; } }
+  pinCacheDirty = true;
+  if (owner) owner->SetLayoutDirty();
+}
+
+void NodeEditorWindow::OnActiveSceneChanged() {
+  // When the editor switches tabs to another scene, reset the node graph
+  // and try to load the scene-specific sidecar. If none is present, rebuild
+  // a starter graph based on the scene metadata and existing outputs.
+  if (!editor) return;
+
+  // If the new scene already has an in-memory cached graph, restore from that
+  const auto& cached = editor->GetCurrentEditorScene().nodeEditorGraphCache;
+  if (!cached.empty()) {
+    if (LoadGraphFromString(cached)) {
+      layoutDirty = true; for (auto& n : nodes) n->pinCacheDirty = true;
+      return;
+    }
+  }
+
+  bool prev_suppress = suppressComponentSync; suppressComponentSync = true;
+  selectedConnection = nullptr; hoveredConnection = nullptr;
+
+  // Clear current graph state
+  {
+    wi::vector<Node*> toremove; for (auto& n : nodes) toremove.push_back(n.get());
+    for (auto* n : toremove) RemoveNode(n);
+    nodes.clear(); nodeIndex.clear(); entityIndex.clear(); nodesByUid.clear(); connsByUid.clear();
+    hubs.clear(); nextHubId = 1; nextNodeUid = 1; nextConnUid = 1;
+    undoStack.clear(); redoStack.clear();
+    layoutDirty = true; drag = {}; anchorDrag = {}; anchorRight = {}; selectedConnection = nullptr; hoveredConnection = nullptr;
+  }
+
+  // Try to load sidecar based on active scene path
+  const auto& editorscene = editor->GetCurrentEditorScene();
+  const std::string& scene_path = editorscene.path;
+  bool loaded_sidecar = false;
+  if (!scene_path.empty()) {
+    std::string ext = wi::helper::toUpper(wi::helper::GetExtensionFromFileName(scene_path));
+    if (ext == "WISCENE") {
+      std::string base = wi::helper::RemoveExtension(scene_path);
+      wi::vector<std::string> candidates;
+      candidates.push_back(base + ".nodegraph.json");
+      candidates.push_back(base + ".nodegraph");
+      for (const auto& path : candidates) {
+        if (wi::helper::FileExists(path)) {
+          loaded_sidecar = LoadGraph(path);
+          if (loaded_sidecar) break;
+        }
+      }
+    }
+  }
+
+  // Fallback: populate from metadata/outputs if no sidecar found
+  if (!loaded_sidecar) {
+    BuildNodesFromSceneMetadata();
+  }
+
+  suppressComponentSync = prev_suppress;
+}
+
+void NodeEditorWindow::Node::PruneCustomEmptyOutputHeaders(NodeEditorWindow* owner)
+{
+  wi::vector<std::string> toremove;
+  for (auto& orow : outputRows) {
+    const std::string& name = orow->name;
+    if (IsPresetOutput(name)) continue;
+    bool hasConn = false; for (auto& cr : connectionRows) { if (cr->outputName == name) { hasConn = true; break; } }
+    if (!hasConn) toremove.push_back(name);
+  }
+  for (auto& n : toremove) RemoveOutputHeader(owner, n);
+}
 void NodeEditorWindow::Node::LayoutRows() {
   const float padding = 6.0f;
   const float section_gap = 12.0f;
@@ -2115,13 +2484,14 @@ void NodeEditorWindow::Node::LayoutRows() {
 
       float x = start_x;
       const float remove_w = 18.0f;
-      const float aw = std::max(0.0f, w - remove_w - padding * 5.0f);
+      const float aw = std::max(0.0f, w - remove_w - padding * 6.0f);
       // Allocate a bit more width to the output label to accommodate longer names
-      const float out_w    = aw * 0.24f;
-      const float target_w = aw * 0.26f;
-      const float input_w  = aw * 0.18f;
-      const float param_w  = aw * 0.18f;
-      const float delay_w  = std::max(0.0f, aw - (out_w + target_w + input_w + param_w));
+      const float out_w    = aw * 0.22f;
+      const float target_w = aw * 0.24f;
+      const float input_w  = aw * 0.16f;
+      const float param_w  = aw * 0.16f;
+      const float refire_w = aw * 0.10f;
+      const float delay_w  = std::max(0.0f, aw - (out_w + target_w + input_w + param_w + refire_w));
 
       crow->outLabel.SetPos(XMFLOAT2(x, y));
       crow->outLabel.SetSize(XMFLOAT2(out_w, row_h)); x += out_w + padding;
@@ -2182,6 +2552,44 @@ void NodeEditorWindow::RemoveNode(Node* node) {
   node->window.Detach();
   node->window.RemoveWidgets();
 
+  // If any connection rows belong to this node, unregister them and
+  // correctly release hub references before destroying the node:
+  {
+    wi::vector<Node::ConnectionUI*> toremove;
+    toremove.reserve(node->connectionRows.size());
+    for (auto& cr : node->connectionRows) {
+      if (cr) toremove.push_back(cr.get());
+    }
+    for (auto* row : toremove) {
+      // Clear hub refcounts for this row and unregister the connection
+      if (row) {
+        for (auto hid : row->anchorHubIds) {
+          if (auto* h = GetHub(hid)) {
+            if (h->refcount > 0) h->refcount--;
+          }
+          DeleteHubIfUnreferenced(hid);
+        }
+        UnregisterConnection(node, row);
+      }
+    }
+  }
+
+  // If selection points into this node, clear it to avoid dangling pointers
+  if (selectedConnection) {
+    bool belongs = false;
+    for (auto& c : node->connectionRows) {
+      if (c.get() == selectedConnection) { belongs = true; break; }
+    }
+    if (belongs) selectedConnection = nullptr;
+  }
+  if (hoveredConnection) {
+    bool belongs = false;
+    for (auto& c : node->connectionRows) {
+      if (c.get() == hoveredConnection) { belongs = true; break; }
+    }
+    if (belongs) hoveredConnection = nullptr;
+  }
+
   // remove from index
   auto itidx = nodeIndex.find(node->name);
   if (itidx != nodeIndex.end()) {
@@ -2195,6 +2603,15 @@ void NodeEditorWindow::RemoveNode(Node* node) {
     auto itent = entityIndex.find(node->entity);
     if (itent != entityIndex.end() && itent->second == node) {
       entityIndex.erase(itent);
+    }
+    // Clear metadata linkage only on explicit user removal, not during programmatic graph rebuilds
+    if (editor && !suppressComponentSync) {
+      wi::scene::Scene& scene = editor->GetCurrentScene();
+      if (auto* md = scene.metadatas.GetComponent(node->entity)) {
+        if (md->string_values.has("node_editor_uid")) {
+          md->string_values.erase("node_editor_uid");
+        }
+      }
     }
   }
 
@@ -2210,9 +2627,13 @@ void NodeEditorWindow::RemoveNode(Node* node) {
   }
 
   // No global relayout on removal to preserve existing positions
-  // Cleanup hubs that may have become unreferenced
-  for (int i = (int)hubs.size() - 1; i >= 0; --i) {
-    DeleteHubIfUnreferenced(hubs[i].id);
+  // Cleanup any hubs that may have become unreferenced after releasing rows
+  for (auto it = hubs.begin(); it != hubs.end(); ) {
+    if (it->second.refcount == 0) {
+      it = hubs.erase(it);
+    } else {
+      ++it;
+    }
   }
 }
 
@@ -2288,17 +2709,24 @@ NodeEditorWindow::ConnectionSnapshot NodeEditorWindow::MakeSnapshot(const Node* 
   s.input = GetFieldText(row->input);
   s.param = GetFieldText(row->param);
   s.delay = GetFieldText(row->delay);
+  s.refire = GetFieldText(row->refire);
   s.hubIds = row->anchorHubIds;
   return s;
 }
 
 void NodeEditorWindow::ApplySnapshotAdd(const ConnectionSnapshot& s){
-  Node* n = FindNode(s.node_uid); if(!n) return; auto* row = n->AddConnectionRow(this, s.outputName, s.conn_uid); if(!row) return; row->target.SetValue(s.target); row->input.SetValue(s.input); row->param.SetValue(s.param); row->delay.SetValue(s.delay); row->anchorHubIds = s.hubIds; for(auto hid: s.hubIds){ if (auto* h = GetHub(hid)) { h->refcount++; } }
+  Node* n = FindNode(s.node_uid); if(!n) return; auto* row = n->AddConnectionRow(this, s.outputName, s.conn_uid); if(!row) return; row->target.SetValue(s.target); row->input.SetValue(s.input); row->param.SetValue(s.param); row->delay.SetValue(s.delay); row->refire.SetValue(s.refire); row->lastTarget = s.target; row->lastInput = s.input; row->lastParam = s.param; row->lastDelay = s.delay; row->lastRefire = s.refire; row->anchorHubIds = s.hubIds; for(auto hid: s.hubIds){ if (auto* h = GetHub(hid)) { h->refcount++; } }
   n->LayoutRows();
   RegisterConnection(n,row);
+  if (n->type == Node::NodeType::EntityBound) {
+    SyncEntityOutputsFromNode(n);
+  }
 }
-void NodeEditorWindow::ApplySnapshotRemove(const ConnectionSnapshot& s){ Node* n=FindNode(s.node_uid); if(!n) return; Node::ConnectionUI* row = FindConnection(s.conn_uid); if(!row){ for(auto& cr: n->connectionRows){ if(cr->outputName==s.outputName && GetFieldText(cr->target)==s.target && GetFieldText(cr->input)==s.input && GetFieldText(cr->param)==s.param && GetFieldText(cr->delay)==s.delay){ row=cr.get(); break; } } }
+void NodeEditorWindow::ApplySnapshotRemove(const ConnectionSnapshot& s){ Node* n=FindNode(s.node_uid); if(!n) return; Node::ConnectionUI* row = FindConnection(s.conn_uid); if(!row){ for(auto& cr: n->connectionRows){ if(cr->outputName==s.outputName && GetFieldText(cr->target)==s.target && GetFieldText(cr->input)==s.input && GetFieldText(cr->param)==s.param && GetFieldText(cr->delay)==s.delay && GetFieldText(cr->refire)==s.refire){ row=cr.get(); break; } } }
   if(row){ n->RemoveConnectionRow(this,row); }
+  if (n->type == Node::NodeType::EntityBound) {
+    SyncEntityOutputsFromNode(n);
+  }
 }
 
 void NodeEditorWindow::PushCommand(UndoCommand&& cmd){ undoStack.push_back(std::move(cmd)); redoStack.clear(); if(undoStack.size()>UNDO_LIMIT){ undoStack.erase(undoStack.begin()); } }
@@ -2316,11 +2744,16 @@ void NodeEditorWindow::Undo(){ if(undoStack.empty()) return; UndoCommand cmd = s
           r->input.SetValue(c.before.input);
           r->param.SetValue(c.before.param);
           r->delay.SetValue(c.before.delay);
+          r->refire.SetValue(c.before.refire);
           r->lastTarget = c.before.target;
           r->lastInput  = c.before.input;
           r->lastParam  = c.before.param;
           r->lastDelay  = c.before.delay;
+          r->lastRefire = c.before.refire;
           n->LayoutRows();
+          if (n->type == Node::NodeType::EntityBound) {
+            SyncEntityOutputsFromNode(n);
+          }
         }
       } break;
       case UndoType::SetConnectionHubs: {
@@ -2357,11 +2790,16 @@ void NodeEditorWindow::Redo(){ if(redoStack.empty()) return; UndoCommand cmd = s
           r->input.SetValue(c.after.input);
           r->param.SetValue(c.after.param);
           r->delay.SetValue(c.after.delay);
+          r->refire.SetValue(c.after.refire);
           r->lastTarget = c.after.target;
           r->lastInput  = c.after.input;
           r->lastParam  = c.after.param;
           r->lastDelay  = c.after.delay;
+          r->lastRefire  = c.after.refire;
           n->LayoutRows();
+          if (n->type == Node::NodeType::EntityBound) {
+            SyncEntityOutputsFromNode(n);
+          }
         }
       } break;
       case UndoType::SetConnectionHubs: {
@@ -2402,10 +2840,15 @@ void NodeEditorWindow::OnEntityRenamed(wi::ecs::Entity entity, const std::string
 
       // Update any connection rows that strongly bind to this entity
       for (auto& n : nodes) {
+        bool any_changed = false;
         for (auto& cr : n->connectionRows) {
           if (cr->targetEntity == entity) {
             cr->target.SetValue(newname);
+            any_changed = true;
           }
+        }
+        if (any_changed && n->type == Node::NodeType::EntityBound) {
+          SyncEntityOutputsFromNode(n.get());
         }
       }
 
@@ -2414,10 +2857,15 @@ void NodeEditorWindow::OnEntityRenamed(wi::ecs::Entity entity, const std::string
       // connection rows (targetEntity == INVALID_ENTITY) that target oldname to the newname.
       if (oldCount == 1) {
         for (auto& n : nodes) {
+          bool any_changed = false;
           for (auto& cr : n->connectionRows) {
             if (cr->targetEntity == wi::ecs::INVALID_ENTITY && GetFieldText(cr->target) == oldname) {
               cr->target.SetValue(newname);
+              any_changed = true;
             }
+          }
+          if (any_changed && n->type == Node::NodeType::EntityBound) {
+            SyncEntityOutputsFromNode(n.get());
           }
         }
       }
@@ -2429,7 +2877,7 @@ void NodeEditorWindow::OnEntityRenamed(wi::ecs::Entity entity, const std::string
 // Save / Load (JSON)
 // =====================
 
-bool NodeEditorWindow::SaveGraph(const std::string& path) const
+bool NodeEditorWindow::SerializeGraphToString(std::string& out, bool persist_entity_metadata) const
 {
   using nlohmann::json;
   json j;
@@ -2447,6 +2895,17 @@ bool NodeEditorWindow::SaveGraph(const std::string& path) const
   j["hubs"] = jhubs;
 
   // Nodes
+  if (persist_entity_metadata && editor) {
+    wi::scene::Scene& scene = editor->GetCurrentScene();
+    for (const auto& np : nodes) {
+      const Node* n = np.get();
+      if (n->type == Node::NodeType::EntityBound && n->entity != wi::ecs::INVALID_ENTITY) {
+        auto* md = scene.metadatas.GetComponent(n->entity);
+        if (!md) md = &scene.metadatas.Create(n->entity);
+        if (md) md->string_values.set("node_editor_uid", std::to_string(n->uid));
+      }
+    }
+  }
   json jnodes = json::array();
   for (const auto& np : nodes) {
     const Node* n = np.get();
@@ -2454,14 +2913,10 @@ bool NodeEditorWindow::SaveGraph(const std::string& path) const
     nj["uid"] = n->uid;
     nj["type"] = (n->type == Node::NodeType::EntityBound ? "EntityBound" : "LogicOnly");
     nj["name"] = n->name;
-    // NOTE: Do not serialize engine entity linkage here.
-    // Future work: InputOutputComponent will hold association from Entity -> Node uid.
     nj["pos"] = { {"x", n->window.translation.x}, {"y", n->window.translation.y} };
     nj["size"] = { {"w", n->window.scale.x}, {"h", n->window.scale.y} };
 
     // I/O lists
-    // NOTE: For EntityBound nodes, outputs should be derived from the bound entity.
-    // Saving them for now for compatibility; consider ignoring on load in the future.
     json jins = json::array(); for (auto& s : n->inputs) jins.push_back(s);
     json jouts = json::array(); for (auto& s : n->outputs) jouts.push_back(s);
     nj["inputs"] = jins;
@@ -2475,14 +2930,28 @@ bool NodeEditorWindow::SaveGraph(const std::string& path) const
       cj["uid"] = cr->uid;
       cj["outputName"] = cr->outputName;
       cj["target"] = GetFieldText(cr->target);
-      cj["targetEntity"] = (uint64_t)cr->targetEntity;
       cj["input"] = GetFieldText(cr->input);
       cj["param"] = GetFieldText(cr->param);
       cj["delay"] = GetFieldText(cr->delay);
+      cj["refire"] = GetFieldText(cr->refire);
       json jh = json::array(); for (auto hid : cr->anchorHubIds) jh.push_back(hid); cj["hubs"] = jh;
       jconns.push_back(cj);
     }
     nj["connections"] = jconns;
+
+    // Persist entity binding hint for robust rebind (in addition to metadata)
+    if (n->type == Node::NodeType::EntityBound && n->entity != wi::ecs::INVALID_ENTITY) {
+      if (editor) {
+        auto& scene2 = editor->GetCurrentScene();
+        if (auto* nc2 = scene2.names.GetComponent(n->entity)) {
+          nj["entityName"] = nc2->name;
+        } else {
+          nj["entityName"] = n->name;
+        }
+      } else {
+        nj["entityName"] = n->name;
+      }
+    }
 
     jnodes.push_back(nj);
   }
@@ -2491,21 +2960,40 @@ bool NodeEditorWindow::SaveGraph(const std::string& path) const
   // Next ids
   j["nextIds"] = { {"node", nextNodeUid}, {"conn", nextConnUid}, {"hub", nextHubId} };
 
+  out = j.dump(2);
+  return true;
+}
+
+bool NodeEditorWindow::SaveGraph(const std::string& path) const
+{
+  std::string text;
+  if (!SerializeGraphToString(text, /*persist_entity_metadata=*/true)) return false;
   std::ofstream ofs(path, std::ios::binary);
   if (!ofs.good()) return false;
-  ofs << j.dump(2);
+  ofs << text;
   return ofs.good();
 }
 
-bool NodeEditorWindow::LoadGraph(const std::string& path)
+bool NodeEditorWindow::LoadGraphFromString(const std::string& json_text)
 {
   using nlohmann::json;
-  std::ifstream ifs(path, std::ios::binary);
-  if (!ifs.good()) return false;
-  json j; ifs >> j; if (!ifs.good() && !ifs.eof()) return false;
+  json j;
+  try {
+    j = json::parse(json_text);
+  } catch (...) {
+    return false;
+  }
 
-  // Clear current graph
+  // Clear current graph (suppress component sync during programmatic rebuild)
+  bool prev_suppress = suppressComponentSync; suppressComponentSync = true;
   selectedConnection = nullptr; hoveredConnection = nullptr;
+  // Reset any interaction state that might hold pointers into old graph
+  drag = {};
+  anchorDrag = {};
+  anchorRight = {};
+  pendingRemoval.clear();
+  lastAddedNode = nullptr;
+  recentlyAddedNewNode = false;
   // Remove nodes safely
   wi::vector<Node*> toremove; for (auto& n : nodes) toremove.push_back(n.get());
   for (auto* n : toremove) RemoveNode(n);
@@ -2527,11 +3015,26 @@ bool NodeEditorWindow::LoadGraph(const std::string& path)
 
   auto mk_vec_str = [](const json& arr){ wi::vector<std::string> out; if(arr.is_array()) for(auto& x: arr) out.push_back(x.get<std::string>()); return out; };
 
+  // Prepare uid uniqueness tracking and optional remap for conflicts
+  std::unordered_set<uint64_t> used_node_uids;
+  std::unordered_map<uint64_t, uint64_t> node_uid_remap; // old->new if reassigned
+  std::unordered_map<uint64_t, std::string> node_entityname_hint; // optional saved entity name per node
+
   // Nodes
   if (j.contains("nodes")) {
     for (auto& nj : j["nodes"]) {
       auto node = std::make_unique<Node>(nj.value("name", std::string("Node")));
-      node->uid = nj.value("uid", nextNodeUid++);
+      {
+        uint64_t req = nj.value("uid", nextNodeUid);
+        uint64_t final_uid = req;
+        if (req == 0 || used_node_uids.count(req) > 0) {
+          final_uid = nextNodeUid++;
+          if (req != 0) node_uid_remap[req] = final_uid;
+        }
+        used_node_uids.insert(final_uid);
+        node->uid = final_uid;
+        if (nextNodeUid <= final_uid) nextNodeUid = final_uid + 1;
+      }
       std::string type = nj.value("type", std::string("LogicOnly"));
       node->type = (type == "EntityBound" ? Node::NodeType::EntityBound : Node::NodeType::LogicOnly);
       // NOTE: We intentionally do not restore engine entity linkage here.
@@ -2578,15 +3081,22 @@ bool NodeEditorWindow::LoadGraph(const std::string& path)
           auto* cr = nodes.back()->AddConnectionRow(this, outname, cuid);
           if (!cr) continue; RegisterConnection(nodes.back().get(), cr);
           cr->target.SetValue(cj.value("target", std::string("!self")));
-          cr->targetEntity = (wi::ecs::Entity)cj.value("targetEntity", (uint64_t)wi::ecs::INVALID_ENTITY);
+          cr->targetEntity = wi::ecs::INVALID_ENTITY;
           cr->input.SetValue(cj.value("input", std::string("FunctionName")));
           cr->param.SetValue(cj.value("param", std::string("")));
           cr->delay.SetValue(cj.value("delay", std::string("0.0")));
+          cr->refire.SetValue(cj.value("refire", std::string("-1")));
+          cr->lastRefire = cr->refire.GetValue();
           // last-committed mirrors
           cr->lastTarget = cr->target.GetValue(); cr->lastInput = cr->input.GetValue(); cr->lastParam = cr->param.GetValue(); cr->lastDelay = cr->delay.GetValue();
           // hubs
           cr->anchorHubIds.clear(); if (cj.contains("hubs")) { for (auto& hx : cj["hubs"]) { uint32_t hid = hx.get<uint32_t>(); cr->anchorHubIds.push_back(hid); if (auto* h=GetHub(hid)) h->refcount++; } }
         }
+      }
+      // Save entity name hint if present
+      if (nj.contains("entityName")) {
+        // The local unique_ptr 'node' was moved into nodes[], so reference nodes.back()
+        try { node_entityname_hint[nodes.back()->uid] = nj["entityName"].get<std::string>(); } catch (...) {}
       }
       nodes.back()->LayoutRows();
     }
@@ -2606,8 +3116,140 @@ bool NodeEditorWindow::LoadGraph(const std::string& path)
   }
 
   // Finalize
+  // Rebind EntityBound nodes to engine entities via metadata key "node_editor_uid"
+  if (editor) {
+    wi::scene::Scene& scene = editor->GetCurrentScene();
+    const auto& ents = scene.metadatas.GetEntityArray();
+    for (wi::ecs::Entity e : ents) {
+      auto* md = scene.metadatas.GetComponent(e);
+      if (!md) continue;
+      if (!md->string_values.has("node_editor_uid")) continue;
+      std::string suid = md->string_values.get("node_editor_uid");
+      if (suid.empty()) continue;
+      uint64_t old_uid = 0; try { old_uid = (uint64_t)std::stoull(suid); } catch (...) { old_uid = 0; }
+      if (old_uid == 0) continue;
+      uint64_t uid = old_uid;
+      auto itremap = node_uid_remap.find(old_uid);
+      if (itremap != node_uid_remap.end()) uid = itremap->second;
+      Node* n = FindNode(uid);
+      if (!n) continue;
+      // Mark as entity-bound and register mapping
+      n->type = Node::NodeType::EntityBound;
+      n->entity = e;
+      entityIndex[e] = n;
+      // Fill preset outputs from entity class and ensure headers exist
+      {
+        std::string classtype;
+        if (md->string_values.has("class")) classtype = md->string_values.get("class");
+        if (classtype.empty() && md->string_values.has("Class")) classtype = md->string_values.get("Class");
+        if (!classtype.empty() && editor) {
+          auto itdef = editor->dynamicEntityDefaults.find(classtype);
+          if (itdef != editor->dynamicEntityDefaults.end()) {
+            for (auto& o : itdef->second.node_outputs) {
+              n->presetOutputs.insert(o);
+              if (!n->FindOutputRow(o)) { suppressComponentSync = true; n->AddOutputRow(this, o); suppressComponentSync = false; }
+            }
+          }
+        }
+      }
+      // Update node title to entity name for clarity
+      if (auto* nc = scene.names.GetComponent(e)) {
+        if (n->name != nc->name) {
+          RenameNode(n, nc->name);
+        }
+      }
+      // If UID was remapped due to conflict, update metadata to the new uid
+      if (uid != old_uid) {
+        md->string_values.set("node_editor_uid", std::to_string(uid));
+      }
+    }
+
+    
+    // Fallback bind: if no metadata mapping, bind nodes to entities by name
+    {
+      std::unordered_map<std::string, wi::ecs::Entity> name_to_entity;
+      const auto& name_entities = scene.names.GetEntityArray();
+      for (wi::ecs::Entity e2 : name_entities) {
+        if (auto* nc2 = scene.names.GetComponent(e2)) {
+          name_to_entity[nc2->name] = e2;
+        }
+      }
+      for (auto& np2 : nodes) {
+        Node* n2 = np2.get(); if (!n2) continue;
+        if (n2->entity != wi::ecs::INVALID_ENTITY) continue;
+        std::string desired = n2->name; if (node_entityname_hint.count(n2->uid)) desired = node_entityname_hint[n2->uid]; auto itne = name_to_entity.find(desired);
+        if (itne != name_to_entity.end()) {
+          wi::ecs::Entity e2 = itne->second;
+          n2->entity = e2;
+          n2->type = Node::NodeType::EntityBound;
+          entityIndex[e2] = n2;
+          auto* md2 = scene.metadatas.GetComponent(e2);
+          if (!md2) md2 = &scene.metadatas.Create(e2);
+          if (md2) md2->string_values.set("node_editor_uid", std::to_string(n2->uid));
+          // Seed preset (non-removable) outputs from entity class if available
+          if (md2) {
+            std::string classtype2;
+            if (md2->string_values.has("class")) classtype2 = md2->string_values.get("class");
+            if (classtype2.empty() && md2->string_values.has("Class")) classtype2 = md2->string_values.get("Class");
+            if (!classtype2.empty() && editor) {
+              auto itdef2 = editor->dynamicEntityDefaults.find(classtype2);
+              if (itdef2 != editor->dynamicEntityDefaults.end()) {
+                for (const auto& o : itdef2->second.node_outputs) {
+                  n2->presetOutputs.insert(o);
+                  if (!n2->FindOutputRow(o)) {
+                    bool prev_sup = suppressComponentSync; suppressComponentSync = true;
+                    n2->AddOutputRow(this, o);
+                    suppressComponentSync = prev_sup;
+                  }
+                }
+              }
+            }
+          }
+          n2->presetOutputs.insert("OnStart");
+        }
+      }
+    }// After nodes are rebound, resolve per-connection targetEntity from target text when possible
+    for (auto& np : nodes) {
+      Node* owner = np.get();
+      for (auto& crp : owner->connectionRows) {
+        auto* cr = crp.get(); if (!cr) continue;
+        std::string tgt = GetFieldText(cr->target);
+        if (tgt.empty() || tgt == "!self") {
+          cr->targetEntity = owner->entity;
+          continue;
+        }
+        // Prefer matching a node by name and taking its bound entity
+        auto itnode = nodeIndex.find(tgt);
+        if (itnode != nodeIndex.end() && !itnode->second.empty()) {
+          Node* tgt_node = itnode->second.front();
+          if (tgt_node && tgt_node->entity != wi::ecs::INVALID_ENTITY) {
+            cr->targetEntity = tgt_node->entity;
+          }
+        }
+      }
+    }
+
+    // Now that everything is rebound and targets resolved, write the loaded rows into components
+    for (auto& np : nodes) {
+      Node* n = np.get();
+      if (n->type == Node::NodeType::EntityBound && n->entity != wi::ecs::INVALID_ENTITY) {
+        // Temporarily release suppression to perform one sync
+        suppressComponentSync = false;
+        SyncEntityOutputsFromNode(n);
+        suppressComponentSync = true;
+      }
+    }
+  }
   layoutDirty = true; for (auto& n : nodes) n->pinCacheDirty = true;
+  suppressComponentSync = prev_suppress;
   return true;
+}
+bool NodeEditorWindow::LoadGraph(const std::string& path)
+{
+  std::ifstream ifs(path, std::ios::binary);
+  if (!ifs.good()) return false;
+  std::string text((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+  return LoadGraphFromString(text);
 }
 void NodeEditorWindow::AddTimerNode() {
   std::string name = "Timer";
@@ -2629,8 +3271,15 @@ void NodeEditorWindow::AddTimerNode() {
   node->window.AddWidget(&node->label);
 
   // Logic-only: Inputs/Outputs
-  node->outputs = { "OnTick" };
-  node->inputs = { "StartTimer", "StopTimer" };
+  if (editor)
+  {
+	  auto Default= editor->dynamicEntityDefaults["logic_timer"];
+	  node->outputs = Default.node_outputs;
+	  node->inputs = Default.node_inputs;
+	  for (auto& o : node->outputs) node->presetOutputs.insert(o);
+  }
+  //node->outputs = { "OnTick" };
+  //node->inputs = { "StartTimer", "StopTimer" };
   for (auto& outname : node->outputs) node->AddOutputRow(this, outname);
   for (auto& inname : node->inputs) {
     auto lbl = std::make_unique<wi::gui::Label>();
@@ -2683,6 +3332,7 @@ void NodeEditorWindow::AddSequenceNode() {
 
   node->inputs = { "In" };
   node->outputs = { "Then1", "Then2" };
+  for (auto& o : node->outputs) node->presetOutputs.insert(o);
   for (auto& outname : node->outputs) node->AddOutputRow(this, outname);
   for (auto& inname : node->inputs) {
     auto lbl = std::make_unique<wi::gui::Label>();

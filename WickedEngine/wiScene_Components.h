@@ -2442,7 +2442,7 @@ namespace wi::scene
 			std::string input;      // input to invoke on target, eg. "Remove"
 			std::string parameter;  // optional string parameter (can be empty)
 			float       delay = 0;  // seconds to defer firing
-			bool        once  = false; // if true, fire only once
+			int			refire  = -1; // if true, fire only once
 		};
 
 		wi::vector<OutputBinding> outputs;

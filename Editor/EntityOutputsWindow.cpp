@@ -7,7 +7,7 @@ using namespace wi::scene;
 void EntityOutputsWindow::Create(EditorComponent* _editor)
 {
     editor = _editor;
-    wi::gui::Window::Create(ICON_OUTPUTS " Entity Outputs", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE | wi::gui::Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
+    wi::gui::Window::Create(ICON_OUTPUTS " Outputs", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE | wi::gui::Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
     SetSize(XMFLOAT2(540, 260));
 
     closeButton.SetTooltip("Delete EntityOutputsComponent");
@@ -45,10 +45,18 @@ void EntityOutputsWindow::Create(EditorComponent* _editor)
             b.input = "";
             b.parameter = "";
             b.delay = 0.0f;
-            b.once = false;
+            b.refire = -1;
             comp.outputs.push_back(std::move(b));
         })(args);
         RefreshRows();
+        // Reflect changes into Node Editor for all selected entities
+        if (editor) {
+            wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [this](uint64_t) {
+                for (auto& x : editor->translator.selected) {
+                    editor->nodeEditorWnd.RefreshNodeFromOutputsComponent(x.entity);
+                }
+            });
+        }
     });
     AddWidget(&addButton);
 
@@ -89,7 +97,7 @@ void EntityOutputsWindow::RefreshRows()
         RemoveWidget(&row.input);
         RemoveWidget(&row.param);
         RemoveWidget(&row.delay);
-        RemoveWidget(&row.once);
+        RemoveWidget(&row.refire);
     }
     rows.clear();
 
@@ -110,8 +118,12 @@ void EntityOutputsWindow::RefreshRows()
                         func(*comp, args);
                 }
             }
-            wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [this](uint64_t userdata) {
+            wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [this](uint64_t) {
                 RefreshRows();
+                // Reflect into Node Editor as well
+                for (auto& x : editor->translator.selected) {
+                    editor->nodeEditorWnd.RefreshNodeFromOutputsComponent(x.entity);
+                }
             });
         };
     };
@@ -171,13 +183,13 @@ void EntityOutputsWindow::RefreshRows()
         }));
         AddWidget(&row.delay);
 
-        row.once.Create("");
-        row.once.SetText("once");
-        row.once.SetCheck(ob.once);
-        row.once.OnClick(forEachSelectedWithRefresh(i, [i](EntityOutputsComponent& c, auto args) {
-            c.outputs[i].once = args.bValue;
+        row.refire.Create("");
+        row.refire.SetText("refire");
+        row.refire.SetValue(ob.refire);
+        row.refire.OnInputAccepted(forEachSelectedWithRefresh(i, [i](EntityOutputsComponent& c, auto args) {
+            c.outputs[i].refire = args.iValue;
         }));
-        AddWidget(&row.once);
+        AddWidget(&row.refire);
     }
 
     editor->generalWnd.RefreshTheme();
@@ -229,9 +241,11 @@ void EntityOutputsWindow::ResizeLayout()
         row.delay.SetSize(XMFLOAT2(70, h));
         x += row.delay.GetSize().x + pad;
 
-        // Once
-        row.once.SetPos(XMFLOAT2(x, y));
-        row.once.SetSize(XMFLOAT2(60, h));
+        // Refire
+		row.refire.SetPos(XMFLOAT2(x, y));
+		row.refire.SetSize(XMFLOAT2(70, h));
+		x += row.delay.GetSize().x + pad;
+
 
         layout.y += h;
         layout.y += pad;

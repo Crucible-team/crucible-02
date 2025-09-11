@@ -6,6 +6,7 @@
 #include "Translator.h"
 #include "DummyVisualizer.h"
 
+
 // some application parameters can be overwritten in the executable by finding the 256 byte long pattern in the first member:
 ApplicationExeCustomization exe_customization = {
 	"Wicked Editor                                                                                                          ",
@@ -13,6 +14,7 @@ ApplicationExeCustomization exe_customization = {
 	wi::Color(17, 30, 43, 255)
 };
 
+using json = nlohmann::json;
 using namespace wi::graphics;
 using namespace wi::primitive;
 using namespace wi::scene;
@@ -640,6 +642,160 @@ void EditorComponent::Load()
 	newEntityCombo.AddItem("Metadata " ICON_METADATA, NEW_METADATA);
 	newEntityCombo.AddItem("Constraint " ICON_CONSTRAINT, NEW_CONSTRAINT);
 	newEntityCombo.AddItem("Spline " ICON_SPLINE, NEW_SPLINE);
+
+
+
+
+	// Load dynamic entity class presets from entities/ folder(s)
+	dynamicEntityClasses.clear();
+	dynamicEntityDefaults.clear();
+	{
+		wi::vector<std::string> candidate_dirs;
+		candidate_dirs.push_back(wi::helper::GetCurrentPath() + "/entities/");
+		candidate_dirs.push_back(wi::helper::GetCurrentPath() + "/Content/entities/");
+
+		wi::unordered_set<std::string> unique_names;
+
+		auto register_preset = [&](const std::string& name, const DynamicPresetDefaults* defaults) {
+			if (name.empty()) return;
+			bool newly_added = false;
+			if (unique_names.count(name) == 0) {
+				unique_names.insert(name);
+				dynamicEntityClasses.push_back(name);
+				newly_added = true;
+			}
+			if (defaults != nullptr)
+			{
+				// store defaults (update if missing or newly added)
+				if (newly_added || dynamicEntityDefaults.find(name) == dynamicEntityDefaults.end())
+				{
+					dynamicEntityDefaults[name] = *defaults;
+				}
+			}
+			};
+
+		auto parse_defaults = [&](const json& container, DynamicPresetDefaults& out_defaults) {
+			const json* md = nullptr;
+			if (container.is_object())
+			{
+				if (container.contains("metadata") && container["metadata"].is_object())
+				{
+					md = &container["metadata"];
+				}
+				else
+				{
+					// also allow direct typed groups at top level
+					md = &container;
+				}
+				if (md->contains("bool") && (*md)["bool"].is_object())
+				{
+					for (auto it = (*md)["bool"].begin(); it != (*md)["bool"].end(); ++it)
+					{
+						if (it.value().is_boolean())
+							out_defaults.bools[it.key()] = it.value().get<bool>();
+					}
+				}
+				if (md->contains("int") && (*md)["int"].is_object())
+				{
+					for (auto it = (*md)["int"].begin(); it != (*md)["int"].end(); ++it)
+					{
+						if (it.value().is_number_integer())
+							out_defaults.ints[it.key()] = it.value().get<int>();
+					}
+				}
+				if (md->contains("float") && (*md)["float"].is_object())
+				{
+					for (auto it = (*md)["float"].begin(); it != (*md)["float"].end(); ++it)
+					{
+						if (it.value().is_number())
+							out_defaults.floats[it.key()] = it.value().get<float>();
+					}
+				}
+				if (md->contains("string") && (*md)["string"].is_object())
+				{
+					for (auto it = (*md)["string"].begin(); it != (*md)["string"].end(); ++it)
+					{
+						if (it.value().is_string())
+							out_defaults.strings[it.key()] = it.value().get<std::string>();
+					}
+				}
+			}
+			if (container.contains("components")) {
+				const auto& comps = container["components"];
+				if (comps.is_array()) {
+					for (auto& v : comps) if (v.is_string()) out_defaults.component_list.push_back(v.get<std::string>());
+				}
+				else if (comps.is_object()) {
+					// keys are component names, values are init objects
+					for (auto it = comps.begin(); it != comps.end(); ++it) {
+						out_defaults.component_list.push_back(it.key());
+						out_defaults.component_init[it.key()] = it.value();
+					}
+				}
+			}
+			if (container.contains("node_inputs") && container["node_inputs"].is_array()) {
+				for (auto& v : container["node_inputs"]) {
+					if (v.is_string()) out_defaults.node_inputs.emplace_back(v.get<std::string>());
+				}
+			}
+			if (container.contains("node_outputs") && container["node_outputs"].is_array()) {
+				for (auto& v : container["node_outputs"]) {
+					if (v.is_string()) out_defaults.node_outputs.emplace_back(v.get<std::string>());
+				}
+			}
+
+
+		};
+
+		for (const auto& dir : candidate_dirs)
+		{
+			if (!wi::helper::DirectoryExists(dir))
+				continue;
+
+
+			// Fallback: enumerate individual .json files as entity classes
+			wi::helper::GetFileNamesInDirectory(dir, [&](std::string path) {
+				// normalize lower-case compare for presets.json
+				std::string filename = wi::helper::GetFileNameFromPath(path);
+				if (wi::helper::toLower(wi::helper::GetExtensionFromFileName(filename)) != "json")
+					return;
+
+				// Try to parse a display name and defaults from file, fallback to filename without extension
+				std::string display = wi::helper::RemoveExtension(filename);
+				DynamicPresetDefaults defs;
+				wi::vector<uint8_t> data;
+				if (wi::helper::FileRead(path, data))
+				{
+					try
+					{
+						json jj = json::parse(data.begin(), data.end());
+						if (jj.is_object())
+						{
+							if (jj.contains("name") && jj["name"].is_string())
+							{
+								display = jj["name"].get<std::string>();
+							}
+							else if (jj.contains("class") && jj["class"].is_string())
+							{
+								display = jj["class"].get<std::string>();
+							}
+							parse_defaults(jj, defs);
+						}
+					}
+					catch (...) {
+						// ignore file-specific JSON errors
+					}
+				}
+				register_preset(display, &defs);
+				}, "json");
+		}
+
+		for (size_t i = 0; i < dynamicEntityClasses.size(); ++i)
+		{
+			newEntityCombo.AddItem(dynamicEntityClasses[i], USER_PRESET_BASE + (uint64_t)i);
+		}
+	}
+
 	newEntityCombo.OnSelect([this](wi::gui::EventArgs args) {
 		newEntityCombo.SetSelectedWithoutCallback(-1);
 		const EditorComponent::EditorScene& editorscene = GetCurrentEditorScene();
@@ -856,6 +1012,95 @@ void EditorComponent::Load()
 		}
 		break;
 		default:
+			if (args.userdata >= USER_PRESET_BASE) {
+				size_t idx = size_t(args.userdata - USER_PRESET_BASE);
+				if (idx < dynamicEntityClasses.size()) {
+					const std::string& preset = dynamicEntityClasses[idx];
+					auto it = dynamicEntityDefaults.find(preset);
+					// make sure we have defaults even if empty:
+					DynamicPresetDefaults defs = (it != dynamicEntityDefaults.end()) ? it->second : DynamicPresetDefaults{};
+
+					pick.entity = CreateEntity();
+					scene.transforms.Create(pick.entity);
+					scene.names.Create(pick.entity) = preset; // give it a name
+					auto& md = scene.metadatas.Create(pick.entity); // evry custom entity will have metadata.
+
+					// Attach requested components:
+					auto attach = [&](const std::string& comp) {
+						std::string c = wi::helper::toLower(comp);
+						const nlohmann::json init = defs.component_init.contains(comp) ? defs.component_init[comp] : nlohmann::json();
+
+						/*if (c == "transform") {
+							auto& tc = scene.transforms.Create(pick.entity);
+							if (init.contains("translate")) {
+								auto t = init["translate"]; if (t.is_array() && t.size() == 3)
+									tc.Translate(XMFLOAT3(t[0], t[1], t[2]));
+							}
+							if (init.contains("rotate_rpy")) {
+								auto r = init["rotate_rpy"]; if (r.is_array() && r.size() == 3)
+									tc.RotateRollPitchYaw(XMFLOAT3(r[0], r[1], r[2]));
+							}
+							if (init.contains("scale")) {
+								auto s = init["scale"]; if (s.is_array() && s.size() == 3)
+									tc.Scale(XMFLOAT3(s[0], s[1], s[2]));
+							}
+						}*/
+						if (c == "script") {
+							auto& sc = scene.scripts.Create(pick.entity);
+							if (init.contains("file") && init["file"].is_string()) {
+								//sc.script = init["file"].get<std::string>();
+							}
+						}
+						else if (c == "outputs") {
+							scene.entityoutputs.Create(pick.entity);
+						}
+						else if (c == "collider") {
+							scene.colliders.Create(pick.entity);
+							// (optional) read shape/size/cpu flags from `init` and apply on ColliderComponent
+						}
+						else if (c == "pointlight" || c == "rectlight" || c == "spotlight" || c == "directionallight") {
+							
+							auto& lc = scene.lights.Create(pick.entity);
+							if (c == "pointlight") lc.type = LightComponent::POINT;
+							if (c == "rectlight")  lc.type = LightComponent::RECTANGLE;
+							if (c == "spotlight")  lc.type = LightComponent::SPOT;
+							if (c == "directionallight") lc.type = LightComponent::DIRECTIONAL;
+							// apply optional intensity/length/height etc from init perhaps?
+						}
+						else if (c == "material") {
+							scene.materials.Create(pick.entity);
+						}
+						else if (c == "sound") { scene.sounds.Create(pick.entity); }
+						else if (c == "video") { scene.videos.Create(pick.entity); }
+						else if (c == "emitter") { scene.emitters.Create(pick.entity); }
+						else if (c == "hair") { scene.hairs.Create(pick.entity); }
+						else if (c == "camera") { scene.cameras.Create(pick.entity); }
+						else if (c == "sprite") { scene.sprites.Create(pick.entity); }
+						else if (c == "font") { scene.fonts.Create(pick.entity); }
+						else if (c == "voxelgrid") { scene.voxel_grids.Create(pick.entity); }
+						else if (c == "weather") { scene.weathers.Create(pick.entity); }
+						else if (c == "force") { scene.forces.Create(pick.entity); }
+						else if (c == "decal") { scene.decals.Create(pick.entity); }
+						else if (c == "terrain") {
+							// probably not used.
+						}
+						// Add more here as needed...
+						};
+
+					for (const auto& compName : defs.component_list) {
+						attach(compName);
+					}
+
+					//  Apply metadata defaults from preset (if any):
+					if (!defs.bools.empty() || !defs.ints.empty() || !defs.floats.empty() || !defs.strings.empty()) {
+						for (auto& [k, v] : defs.bools)  md.bool_values.set(k, v);
+						for (auto& [k, v] : defs.ints)   md.int_values.set(k, v);
+						for (auto& [k, v] : defs.floats) md.float_values.set(k, v);
+						for (auto& [k, v] : defs.strings)md.string_values.set(k, v);
+					}
+
+				}
+			}
 			break;
 		}
 		if (pick.entity != INVALID_ENTITY)
@@ -5228,6 +5473,25 @@ void EditorComponent::Open(std::string filename)
 
 			componentsWnd.weatherWnd.UpdateData();
 			componentsWnd.RefreshEntityTree();
+
+			// Auto-load associated Node Graph sidecar for .wiscene files
+			if (type == FileType::WISCENE)
+			{
+				// Derive candidate sidecar paths based on scene filename
+				std::string base = wi::helper::RemoveExtension(filename);
+				wi::vector<std::string> candidates;
+				candidates.push_back(base + ".nodegraph.json");
+				candidates.push_back(base + ".nodegraph");
+				for (const auto& path : candidates)
+				{
+					if (wi::helper::FileExists(path))
+					{
+						// Load the node graph; it will rebind to entities via Metadata (node_editor_uid)
+						nodeEditorWnd.LoadGraph(path);
+						break;
+					}
+				}
+			}
 			wi::backlog::post("[Editor] finished loading model: " + filename);
 		});
 	});
@@ -5271,13 +5535,20 @@ void EditorComponent::Save(const std::string& filename)
 
 			scene.Serialize(archive);
 
-			if (dump_to_header)
+				if (dump_to_header)
 			{
 				archive.SaveHeaderFile(filename, wi::helper::RemoveExtension(wi::helper::GetFileNameFromPath(filename)));
 			}
 			else if (dump_to_cpp)
 			{
 				archive.SaveCPPFile(filename, wi::helper::RemoveExtension(wi::helper::GetFileNameFromPath(filename)));
+			}
+			// Auto-save Node Editor graph sidecar next to .wiscene
+			if (type == FileType::WISCENE)
+			{
+				std::string base = wi::helper::RemoveExtension(filename);
+				std::string sidecar = base + ".nodegraph.json";
+				nodeEditorWnd.SaveGraph(sidecar);
 			}
 		}
 		else
@@ -5995,13 +6266,24 @@ void EditorComponent::UpdateDynamicWidgets()
 
 void EditorComponent::SetCurrentScene(int index)
 {
-	current_scene = index;
-	this->renderPath->scene = &scenes[current_scene].get()->scene;
-	this->renderPath->camera = &scenes[current_scene].get()->camera;
-	wi::lua::scene::SetGlobalScene(renderPath->scene);
-	wi::lua::scene::SetGlobalCamera(renderPath->camera);
-	componentsWnd.RefreshEntityTree();
-	RefreshSceneList();
+    // Cache the current scene's Node Editor graph into memory before switching
+    if (!scenes.empty() && current_scene >= 0 && current_scene < (int)scenes.size())
+    {
+        std::string cache;
+        nodeEditorWnd.SerializeGraphToString(cache, /*persist_entity_metadata=*/false);
+        scenes[current_scene]->nodeEditorGraphCache = std::move(cache);
+    }
+
+    current_scene = index;
+    this->renderPath->scene = &scenes[current_scene].get()->scene;
+    this->renderPath->camera = &scenes[current_scene].get()->camera;
+    wi::lua::scene::SetGlobalScene(renderPath->scene);
+    wi::lua::scene::SetGlobalCamera(renderPath->camera);
+    componentsWnd.RefreshEntityTree();
+    RefreshSceneList();
+
+    // Ensure Node Editor reflects the newly active scene
+    nodeEditorWnd.OnActiveSceneChanged();
 }
 void EditorComponent::RefreshSceneList()
 {

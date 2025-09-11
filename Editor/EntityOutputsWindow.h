@@ -20,7 +20,7 @@ public:
         wi::gui::TextInputField input;
         wi::gui::TextInputField param;
         wi::gui::TextInputField delay;
-        wi::gui::CheckBox once;
+        wi::gui::TextInputField refire;
     };
     std::deque<Row> rows;
 

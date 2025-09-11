@@ -2556,7 +2556,7 @@ void MetadataComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 				archive >> b.input;
 				archive >> b.parameter;
 				archive >> b.delay;
-				archive >> b.once;
+				archive >> b.refire;
 				outputs.push_back(std::move(b));
 			}
 		}
@@ -2570,7 +2570,7 @@ void MetadataComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 				archive << b.input;
 				archive << b.parameter;
 				archive << b.delay;
-				archive << b.once;
+				archive << b.refire;
 			}
 		}
 	}

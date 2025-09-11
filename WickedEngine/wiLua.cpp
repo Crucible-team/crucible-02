@@ -29,8 +29,29 @@
 #include "wiTimer.h"
 #include "wiVector.h"
 #include "wiVersion.h"
+#include "wiArguments.h"
+//#include "lrdb/server.hpp"
 
 #include <memory>
+
+// Declarations from LuaSocket objects you compiled in:
+/*extern "C" {
+	int luaopen_socket_core(lua_State* L);
+	int luaopen_mime_core(lua_State* L);
+}
+
+static void preload_luasocket(lua_State* L) {
+	lua_getglobal(L, "package");
+	lua_getfield(L, -1, "preload");           // package.preload
+
+	lua_pushcfunction(L, luaopen_socket_core);
+	lua_setfield(L, -2, "socket.core");       // package.preload["socket.core"] = luaopen_socket_core
+
+	lua_pushcfunction(L, luaopen_mime_core);
+	lua_setfield(L, -2, "mime.core");         // package.preload["mime.core"] = luaopen_mime_core
+
+	lua_pop(L, 2); // pop preload, package
+}*/
 
 namespace wi::lua
 {
@@ -43,6 +64,10 @@ namespace wi::lua
 		{
 			if (m_luaState != NULL)
 			{
+				if(wi::arguments::HasArgument("luadebug"))
+				{
+					//debug_server.reset(); //unassign debug server (Required before lua_close )
+				}
 				lua_close(m_luaState);
 			}
 		}
@@ -270,8 +295,21 @@ namespace wi::lua
 
 		wi::Timer timer;
 
+		int listen_port = 21110;//listen tcp port for debugger interface
+
 		lua_internal().m_luaState = luaL_newstate();
+		
+
 		luaL_openlibs(lua_internal().m_luaState);
+		if (wi::arguments::HasArgument("luadebug"))
+		{
+			
+			//lrdb::server debug_server(listen_port);
+			//debug_server.reset(lua_internal().m_luaState);//assign debug server to lua state(Required before script load)
+		}
+
+		//preload_luasocket(lua_internal().m_luaState);
+
 		RegisterFunc("dofile", Internal_DoFile);
 		RegisterFunc("dobinaryfile", Internal_DoBinaryFile);
 		RegisterFunc("compilebinaryfile", Internal_CompileBinaryFile);
