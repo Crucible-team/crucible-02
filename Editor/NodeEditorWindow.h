@@ -10,6 +10,8 @@ public:
   void Create(EditorComponent *editor);
   void BuildNodesFromSceneMetadata();
   void SetLayoutDirty() { layoutDirty = true; }
+  // Public helper to add a single entity's node to the graph
+  void AddEntityToGraph(wi::ecs::Entity entity);
 
   struct Node {
     enum class NodeType { LogicOnly, EntityBound };
@@ -125,8 +127,6 @@ public:
   wi::gui::Button importFromSceneButton;
   wi::gui::Button addTimerButton;
   wi::gui::Button addSequenceButton;
-  wi::gui::Button saveGraphButton;
-  wi::gui::Button loadGraphButton;
   bool recentlyAddedNewNode = false;
 
   void Update(const wi::Canvas &canvas, float dt) override;
@@ -142,14 +142,18 @@ public:
   // Persistence (JSON): save/load full node graph
   bool SaveGraph(const std::string& path) const;
   bool LoadGraph(const std::string& path);
+  bool MergeGraph(const std::string& path);
   // In-memory serialization (no disk IO). If persist_entity_metadata is true,
   // entity-bound node uids are written to scene metadata; leave false for tab caching.
   bool SerializeGraphToString(std::string& out, bool persist_entity_metadata = false) const;
   bool LoadGraphFromString(const std::string& json_text);
+  bool MergeGraphFromString(const std::string& json_text);
 
 private:
   // Suppress writing back to EntityOutputsComponent during programmatic builds/imports
   bool suppressComponentSync = false;
+  // Generate a unique node name by appending (n) when necessary
+  std::string MakeUniqueNodeName(const std::string& base) const;
   // Sync UI <-> Scene::EntityOutputsComponent for EntityBound nodes
   void SyncEntityOutputsFromNode(Node* node);
   void PopulateConnectionsFromComponent(Node* node);

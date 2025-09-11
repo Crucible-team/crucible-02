@@ -79,23 +79,6 @@ void NodeEditorWindow::Create(EditorComponent *_editor) {
   addSequenceButton.OnClick([this](wi::gui::EventArgs) { AddSequenceNode(); });
   AddWidget(&addSequenceButton, wi::gui::Window::AttachmentOptions::NONE);
 
-  saveGraphButton.Create("Save Graph");
-  saveGraphButton.SetLocalizationEnabled(false);
-  saveGraphButton.SetSize(XMFLOAT2(120, 25));
-  saveGraphButton.OnClick([this](wi::gui::EventArgs) {
-    // TODO: integrate file picker; default to nodegraph.json
-    SaveGraph("nodegraph.json");
-  });
-  AddWidget(&saveGraphButton, wi::gui::Window::AttachmentOptions::NONE);
-
-  loadGraphButton.Create("Load Graph");
-  loadGraphButton.SetLocalizationEnabled(false);
-  loadGraphButton.SetSize(XMFLOAT2(120, 25));
-  loadGraphButton.OnClick([this](wi::gui::EventArgs) {
-    LoadGraph("nodegraph.json");
-  });
-  AddWidget(&loadGraphButton, wi::gui::Window::AttachmentOptions::NONE);
-
   SetVisible(false);
   nextNodeUid = 1;
   nextConnUid = 1;
@@ -1732,20 +1715,6 @@ void NodeEditorWindow::ResizeLayout() {
       translation.x + padding,
       addSequenceButton.GetPos().y - addTimerButton.GetSize().y - padding));
   addTimerButton.AttachTo(this);
-
-  saveGraphButton.Detach();
-  saveGraphButton.SetSize(XMFLOAT2(separator - padding * 2, saveGraphButton.GetSize().y));
-  saveGraphButton.SetPos(XMFLOAT2(
-      translation.x + padding,
-      addTimerButton.GetPos().y - saveGraphButton.GetSize().y - padding));
-  saveGraphButton.AttachTo(this);
-
-  loadGraphButton.Detach();
-  loadGraphButton.SetSize(XMFLOAT2(separator - padding * 2, loadGraphButton.GetSize().y));
-  loadGraphButton.SetPos(XMFLOAT2(
-      translation.x + padding,
-      saveGraphButton.GetPos().y - loadGraphButton.GetSize().y - padding));
-  loadGraphButton.AttachTo(this);
 
   if (recentlyAddedNewNode)
   {

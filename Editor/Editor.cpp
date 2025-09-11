@@ -1023,7 +1023,9 @@ void EditorComponent::Load()
 					pick.entity = CreateEntity();
 					scene.transforms.Create(pick.entity);
 					scene.names.Create(pick.entity) = preset; // give it a name
-					auto& md = scene.metadatas.Create(pick.entity); // evry custom entity will have metadata.
+                    auto& md = scene.metadatas.Create(pick.entity); // evry custom entity will have metadata.
+                    // Tag class on metadata for Node Editor and other systems
+                    md.string_values.set("class", preset);
 
 					// Attach requested components:
 					auto attach = [&](const std::string& comp) {
@@ -1092,12 +1094,15 @@ void EditorComponent::Load()
 					}
 
 					//  Apply metadata defaults from preset (if any):
-					if (!defs.bools.empty() || !defs.ints.empty() || !defs.floats.empty() || !defs.strings.empty()) {
-						for (auto& [k, v] : defs.bools)  md.bool_values.set(k, v);
-						for (auto& [k, v] : defs.ints)   md.int_values.set(k, v);
-						for (auto& [k, v] : defs.floats) md.float_values.set(k, v);
-						for (auto& [k, v] : defs.strings)md.string_values.set(k, v);
-					}
+                    if (!defs.bools.empty() || !defs.ints.empty() || !defs.floats.empty() || !defs.strings.empty()) {
+                        for (auto& [k, v] : defs.bools)  md.bool_values.set(k, v);
+                        for (auto& [k, v] : defs.ints)   md.int_values.set(k, v);
+                        for (auto& [k, v] : defs.floats) md.float_values.set(k, v);
+                        for (auto& [k, v] : defs.strings)md.string_values.set(k, v);
+                    }
+
+                    // Automatically add this entity to the Node Editor graph
+                    nodeEditorWnd.AddEntityToGraph(pick.entity);
 
 				}
 			}
