@@ -13,7 +13,7 @@
 using namespace wi::graphics;
 using namespace wi::gui;
 
-// Internal helpers for link rendering de-duplication:
+// Wire segment deduplication keys
 namespace {
   struct SegmentKey { uint64_t a; uint64_t b; };
   struct SegmentKeyHasher {
@@ -29,6 +29,78 @@ namespace {
   struct SegmentKeyEq {
     bool operator()(const SegmentKey& a, const SegmentKey& b) const noexcept { return a.a == b.a && a.b == b.b; }
   };
+  
+  // Shared 2D vector helpers and wire math utilities
+  inline XMFLOAT2 v_add(const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x + b.x, a.y + b.y); }
+  inline XMFLOAT2 v_sub(const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x - b.x, a.y - b.y); }
+  inline XMFLOAT2 v_mul(const XMFLOAT2& a, float s) { return XMFLOAT2(a.x * s, a.y * s); }
+  inline float    v_len(const XMFLOAT2& v) { return std::sqrt(v.x * v.x + v.y * v.y); }
+  inline bool     v_near_eq(const XMFLOAT2& a, const XMFLOAT2& b, float eps2 = 1.0f) { float dx=a.x-b.x, dy=a.y-b.y; return dx*dx + dy*dy <= eps2; }
+
+  // Clamp incoming tangents to reasonable length for segment P0->P1 with fallbacks
+  inline void ClampTangentsForSegment(const XMFLOAT2& P0, const XMFLOAT2& P1, XMFLOAT2& T0, XMFLOAT2& T1, float minHandle, float clampK)
+  {
+    const float seglen = v_len(v_sub(P1, P0));
+    const float maxHandle = std::max(minHandle, seglen * clampK);
+    auto clamp_one = [&](XMFLOAT2& T, float fallback_dirx)
+    {
+      const float L = v_len(T);
+      if (L < 1e-5f)
+      {
+        const float Lc = std::min(minHandle, maxHandle);
+        T = XMFLOAT2((fallback_dirx >= 0 ? 1.0f : -1.0f) * Lc, 0);
+        return;
+      }
+      const float Lc = std::max(minHandle, std::min(maxHandle, L));
+      const float s = Lc / L;
+      T = v_mul(T, s);
+    };
+    const float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
+    const float dirx1 = -dirx0;
+    clamp_one(T0, dirx0);
+    clamp_one(T1, dirx1);
+  }
+
+  // Cubic Hermite evaluation using endpoint tangents (T0, T1)
+  inline XMFLOAT2 BezierEval(const XMFLOAT2& P0, const XMFLOAT2& P1, const XMFLOAT2& T0, const XMFLOAT2& T1, float t)
+  {
+    const float t2 = t * t;
+    const float t3 = t2 * t;
+    const float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+    const float h10 = t3 - 2.0f * t2 + t;
+    const float h01 = -2.0f * t3 + 3.0f * t2;
+    const float h11 = t3 - t2;
+    return XMFLOAT2(
+      h00 * P0.x + h10 * T0.x + h01 * P1.x + h11 * T1.x,
+      h00 * P0.y + h10 * T0.y + h01 * P1.y + h11 * T1.y
+    );
+  }
+
+  // Approximate min distance^2 from point P to cubic (P0,T0,P1,T1) by uniform sampling
+  inline float SegmentApproxMinDist2(const XMFLOAT2& P, const XMFLOAT2& P0, const XMFLOAT2& P1, XMFLOAT2 T0, XMFLOAT2 T1, float minHandle, float clampK, int samples = 24)
+  {
+    // Ensure tangents are clamped consistently with rendering
+    ClampTangentsForSegment(P0, P1, T0, T1, minHandle, clampK);
+    float best = FLT_MAX;
+    XMFLOAT2 prev = P0;
+    for (int s = 1; s <= samples; ++s)
+    {
+      const float t = float(s) / float(samples);
+      const XMFLOAT2 cur = BezierEval(P0, P1, T0, T1, t);
+      // point-to-segment distance^2 for polyline piece prev->cur
+      const XMFLOAT2 AB = v_sub(cur, prev);
+      const XMFLOAT2 AP = v_sub(P, prev);
+      const float ab2 = AB.x * AB.x + AB.y * AB.y;
+      float tt = 0;
+      if (ab2 > 0) tt = std::max(0.0f, std::min(1.0f, (AP.x * AB.x + AP.y * AB.y) / ab2));
+      const XMFLOAT2 H = XMFLOAT2(prev.x + AB.x * tt, prev.y + AB.y * tt);
+      const float dx = P.x - H.x, dy = P.y - H.y;
+      const float d2 = dx * dx + dy * dy;
+      if (d2 < best) best = d2;
+      prev = cur;
+    }
+    return best;
+  }
 }
 
 // Helper: read text from TextInputField, prefer current typing if any
@@ -47,6 +119,40 @@ static const float NODE_AUTOSIZE_SHRINK_DELAY = 0.4f;
 static const float NODE_MAX_CONTENT_W = 900.0f;          
 static const float NODE_MIN_CONTENT_W = 200.0f;          
 static const float NODE_AUTOSIZE_THROTTLE = 1.0f / 15.0f;
+
+void NodeEditorWindow::BuildSharedPathPoints(const wi::vector<uint32_t>& hubIds, const XMFLOAT2& src, wi::vector<XMFLOAT2>& out_pts) const
+{
+  out_pts.clear();
+  out_pts.push_back(src);
+  for (size_t i = 0; i < hubIds.size(); ++i)
+  {
+    const auto* hub = GetHub(hubIds[i]);
+    if (!hub) continue;
+    out_pts.push_back(XMFLOAT2(
+      scrollable_area.translation.x + hub->pos.x,
+      scrollable_area.translation.y + hub->pos.y));
+  }
+}
+
+void NodeEditorWindow::BuildSharedPathPointsAndTokens(const wi::vector<uint32_t>& hubIds, const XMFLOAT2& src,
+                                      uint64_t src_token, uint64_t tag_src, uint64_t tag_hub,
+                                      wi::vector<XMFLOAT2>& out_pts, wi::vector<uint64_t>& out_tokens) const
+{
+  out_pts.clear();
+  out_tokens.clear();
+  out_pts.push_back(src);
+  out_tokens.push_back(tag_src | src_token);
+  for (size_t i = 0; i < hubIds.size(); ++i)
+  {
+    const uint32_t hid = hubIds[i];
+    const auto* hub = GetHub(hid);
+    if (!hub) continue;
+    out_pts.push_back(XMFLOAT2(
+      scrollable_area.translation.x + hub->pos.x,
+      scrollable_area.translation.y + hub->pos.y));
+    out_tokens.push_back(tag_hub | (uint64_t)hid);
+  }
+}
 
 void NodeEditorWindow::Create(EditorComponent *_editor) {
   editor = _editor;
@@ -318,7 +424,7 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
         const std::string input_name = GetFieldText(crow->input);
 
         // Build shared path (source -> hubs) and draw it once
-        // Build stable endpoint tokens for de-dup across connections
+        // Wire segment de-duplication tokens
         constexpr uint64_t TAG_SRC = 0x0000000000000000ULL;
         constexpr uint64_t TAG_HUB = 0x4000000000000000ULL;
         constexpr uint64_t TAG_TIL = 0x8000000000000000ULL; // target input label
@@ -326,36 +432,15 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
 
         wi::vector<XMFLOAT2> shared_pts;
         wi::vector<uint64_t> shared_tokens;
-        shared_pts.push_back(XMFLOAT2(sx, sy));
-        shared_tokens.push_back(TAG_SRC | (uint64_t)(uintptr_t)src_orow);
-        for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
-          const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
-          shared_pts.push_back(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
-          shared_tokens.push_back(TAG_HUB | (uint64_t)crow->anchorHubIds[i]);
-        }
+        BuildSharedPathPointsAndTokens(crow->anchorHubIds, XMFLOAT2(sx, sy), (uint64_t)(uintptr_t)src_orow, TAG_SRC, TAG_HUB, shared_pts, shared_tokens);
 
         // Compact near-duplicates on the shared path
         if (shared_pts.size() >= 2) {
           wi::vector<XMFLOAT2> compact;
           compact.reserve(shared_pts.size());
-          auto near_eq = [](const XMFLOAT2& a, const XMFLOAT2& b){ float dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy <= 1.0f; };
-          for (const auto& p : shared_pts) { if (compact.empty() || !near_eq(compact.back(), p)) compact.push_back(p); }
+          for (const auto& p : shared_pts) { if (compact.empty() || !v_near_eq(compact.back(), p)) compact.push_back(p); }
           if (compact.size() >= 2) shared_pts = std::move(compact);
         }
-
-        auto sub = [](const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x - b.x, a.y - b.y); };
-        auto mul = [](const XMFLOAT2& a, float s) { return XMFLOAT2(a.x * s, a.y * s); };
-        auto len = [](const XMFLOAT2& v) { return std::sqrt(v.x * v.x + v.y * v.y); };
-        auto clamp_handle = [&](const XMFLOAT2& v, float minl, float maxl, float fallback_dirx) {
-          float L = len(v);
-          if (L < 1e-5f) {
-            float Lc = std::max(minl, std::min(maxl, minl));
-            return XMFLOAT2((fallback_dirx >= 0 ? 1.0f : -1.0f) * Lc, 0);
-          }
-          float Lc = std::max(minl, std::min(maxl, L));
-          float s = Lc / L;
-          return XMFLOAT2(v.x * s, v.y * s);
-        };
 
         const float endpointBias = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
         const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
@@ -375,21 +460,16 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
               T0 = XMFLOAT2(+endpointBias, 0);
             } else {
               const XMFLOAT2& Pm1 = shared_pts[i - 1];
-              T0 = mul(sub(shared_pts[i + 1], Pm1), 0.5f);
+              T0 = v_mul(v_sub(shared_pts[i + 1], Pm1), 0.5f);
             }
             if (i + 1 < shared_pts.size() - 1) {
               const XMFLOAT2& Pp2 = shared_pts[i + 2];
-              T1 = mul(sub(Pp2, P0), 0.5f);
+              T1 = v_mul(v_sub(Pp2, P0), 0.5f);
             } else {
               // Last shared segment: approximate forward tangent by the segment direction
-              T1 = mul(sub(P1, P0), 0.5f);
+              T1 = v_mul(v_sub(P1, P0), 0.5f);
             }
-            float seglen = len(sub(P1, P0));
-            float maxHandle = std::max(minHandle, seglen * clampK);
-            float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
-            float dirx1 = -dirx0;
-            T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
-            T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
+            ClampTangentsForSegment(P0, P1, T0, T1, minHandle, clampK);
             wi::gui::AddWireBezierStripTangent(P0, P1, T0, T1, 2.0f, col);
             drawnSegments.insert(segkey);
           }
@@ -432,17 +512,12 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           XMFLOAT2 T0, T1;
           if (has_prev) {
             // Catmull-Rom style at hub/source using previous point and target
-            T0 = mul(sub(P1, shared_prev), 0.5f);
+            T0 = v_mul(v_sub(P1, shared_prev), 0.5f);
           } else {
             T0 = XMFLOAT2(+endpointBias, 0);
           }
           T1 = XMFLOAT2(+endpointBias, 0);
-          float seglen = len(sub(P1, P0));
-          float maxHandle = std::max(minHandle, seglen * clampK);
-          float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
-          float dirx1 = -dirx0;
-          T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
-          T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
+          ClampTangentsForSegment(P0, P1, T0, T1, minHandle, clampK);
           wi::gui::AddWireBezierStripTangent(P0, P1, T0, T1, 2.0f, col);
           drawnSegments.insert(lastseg);
         }
@@ -497,32 +572,14 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
           const float endpointBias = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
           const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
           const float clampK = NodeEditorWindow::WIRE_CLAMP_K;
-          auto sub = [](const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x - b.x, a.y - b.y); };
-          auto mul = [](const XMFLOAT2& a, float s) { return XMFLOAT2(a.x * s, a.y * s); };
-          auto len = [](const XMFLOAT2& v) { return std::sqrt(v.x * v.x + v.y * v.y); };
-          auto clamp_handle = [&](const XMFLOAT2& v, float minl, float maxl, float fallback_dirx) {
-            float L = len(v);
-            if (L < 1e-5f) {
-              float Lc = std::max(minl, std::min(maxl, minl));
-              return XMFLOAT2((fallback_dirx >= 0 ? 1.0f : -1.0f) * Lc, 0);
-            }
-            float Lc = std::max(minl, std::min(maxl, L));
-            float s = Lc / L;
-            return XMFLOAT2(v.x * s, v.y * s);
-          };
 
           // Build shared path
           wi::vector<XMFLOAT2> shared_pts;
-          shared_pts.push_back(XMFLOAT2(sx, sy));
-          for (size_t i = 0; i < hoveredConnection->anchorHubIds.size(); ++i) {
-            const auto* hub = GetHub(hoveredConnection->anchorHubIds[i]); if (!hub) continue;
-            shared_pts.push_back(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
-          }
+          BuildSharedPathPoints(hoveredConnection->anchorHubIds, XMFLOAT2(sx, sy), shared_pts);
           if (shared_pts.size() >= 2) {
             wi::vector<XMFLOAT2> compact;
             compact.reserve(shared_pts.size());
-            auto near_eq = [](const XMFLOAT2& a, const XMFLOAT2& b){ float dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy <= 1.0f; };
-            for (const auto& p : shared_pts) { if (compact.empty() || !near_eq(compact.back(), p)) compact.push_back(p); }
+            for (const auto& p : shared_pts) { if (compact.empty() || !v_near_eq(compact.back(), p)) compact.push_back(p); }
             if (compact.size() >= 2) shared_pts = std::move(compact);
           }
 
@@ -539,20 +596,15 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
                 T0 = XMFLOAT2(+endpointBias, 0);
               } else {
                 const XMFLOAT2& Pm1 = shared_pts[i - 1];
-                T0 = mul(sub(shared_pts[i + 1], Pm1), 0.5f);
+                T0 = v_mul(v_sub(shared_pts[i + 1], Pm1), 0.5f);
               }
               if (i + 1 < shared_pts.size() - 1) {
                 const XMFLOAT2& Pp2 = shared_pts[i + 2];
-                T1 = mul(sub(Pp2, P0), 0.5f);
+                T1 = v_mul(v_sub(Pp2, P0), 0.5f);
               } else {
-                T1 = mul(sub(P1, P0), 0.5f);
+                T1 = v_mul(v_sub(P1, P0), 0.5f);
               }
-              float seglen = len(sub(P1, P0));
-              float maxHandle = std::max(minHandle, seglen * clampK);
-              float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
-              float dirx1 = -dirx0;
-              T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
-              T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
+              ClampTangentsForSegment(P0, P1, T0, T1, minHandle, clampK);
               wi::gui::AddWireBezierStripTangent(P0, P1, T0, T1, glow_thick, glow_col);
             }
           }
@@ -586,17 +638,12 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
             const XMFLOAT2 P1 = XMFLOAT2(ex, ey);
             XMFLOAT2 T0, T1;
             if (has_prev) {
-              T0 = mul(sub(P1, shared_prev), 0.5f);
+              T0 = v_mul(v_sub(P1, shared_prev), 0.5f);
             } else {
               T0 = XMFLOAT2(+endpointBias, 0);
             }
             T1 = XMFLOAT2(+endpointBias, 0);
-            float seglen = len(sub(P1, P0));
-            float maxHandle = std::max(minHandle, seglen * clampK);
-            float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
-            float dirx1 = -dirx0;
-            T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
-            T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
+            ClampTangentsForSegment(P0, P1, T0, T1, minHandle, clampK);
             wi::gui::AddWireBezierStripTangent(P0, P1, T0, T1, glow_thick, glow_col);
           }
           wi::gui::FlushWireBatch();
@@ -633,6 +680,8 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
       }
       // Tangent-aware preview: leave source horizontally, enter input horizontally if snapping
       const float endpointBias = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
+      const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
+      const float clampK = NodeEditorWindow::WIRE_CLAMP_K;
       XMFLOAT2 P0(sx, sy);
       XMFLOAT2 P1(ex, ey);
       // Always leave source/output horizontally to the right
@@ -642,17 +691,10 @@ void NodeEditorWindow::Render(const wi::Canvas &canvas, CommandList cmd) const {
         // Approach target/input horizontally from the left (opposite)
         T1 = XMFLOAT2(+endpointBias, 0);
       } else {
-        // free-end towards cursor: aim along delta, clamp to sensible length
-        XMFLOAT2 delta(P1.x - P0.x, P1.y - P0.y);
-        float L = std::sqrt(delta.x * delta.x + delta.y * delta.y);
-        float maxHandle = std::max(10.0f, L * 0.45f);
-        if (L > 1e-4f) {
-          float s = std::min(maxHandle, L * 0.5f) / L;
-          T1 = XMFLOAT2(delta.x * s, delta.y * s);
-        } else {
-          T1 = XMFLOAT2(-T0.x, 0);
-        }
+        // Free-end towards cursor: aim along delta and clamp via shared logic
+        T1 = v_mul(v_sub(P1, P0), 0.5f);
       }
+      ClampTangentsForSegment(P0, P1, T0, T1, minHandle, clampK);
       wi::gui::AddWireBezierStripTangent(P0, P1, T0, T1, 2.0f, XMFLOAT4(0.8f, 0.9f, 1.0f, 0.9f));
       wi::gui::FlushWireBatch();
     }
@@ -1081,76 +1123,16 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             }
             XMFLOAT2 srcpos(sx, sy);
 
-            auto testSegment = [&](const XMFLOAT2& A, const XMFLOAT2& B) {
-              XMFLOAT2 AB(B.x - A.x, B.y - A.y);
-              float ab2 = AB.x * AB.x + AB.y * AB.y;
-              float t = 0;
-              if (ab2 > 0) t = std::max(0.f, std::min(1.f, ((p.x - A.x) * AB.x + (p.y - A.y) * AB.y) / ab2));
-              XMFLOAT2 H(A.x + AB.x * t, A.y + AB.y * t);
-              float dx = p.x - H.x; float dy = p.y - H.y; return dx * dx + dy * dy;
-            };
-            auto sub = [](const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x - b.x, a.y - b.y); };
-            auto addv = [](const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x + b.x, a.y + b.y); };
-            auto mul = [](const XMFLOAT2& a, float s) { return XMFLOAT2(a.x * s, a.y * s); };
-            auto len = [](const XMFLOAT2& v) { return std::sqrt(v.x * v.x + v.y * v.y); };
-            auto clamp_handle = [&](const XMFLOAT2& v, float minl, float maxl, float fallback_dirx) {
-              float L = len(v);
-              if (L < 1e-5f) {
-                float Lc = std::max(minl, std::min(maxl, minl));
-                return XMFLOAT2((fallback_dirx >= 0 ? 1.0f : -1.0f) * Lc, 0);
-              }
-              float Lc = std::max(minl, std::min(maxl, L));
-              float s = Lc / L;
-              return XMFLOAT2(v.x * s, v.y * s);
-            };
-            auto bezier_eval = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
-              const float it = 1.0f - t;
-              const float a = it * it * it;
-              const float b = 3.0f * it * it * t;
-              const float c = 3.0f * it * t * t;
-              const float d = t * t * t;
-              return XMFLOAT2(
-                a * p0.x + b * p1.x + c * p2.x + d * p3.x,
-                a * p0.y + b * p1.y + c * p2.y + d * p3.y);
-            };
-            auto segment_min_d2 = [&](const XMFLOAT2& P0, const XMFLOAT2& P1, XMFLOAT2 T0, XMFLOAT2 T1) -> float {
-              const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
-              const float clampK = NodeEditorWindow::WIRE_CLAMP_K;
-              float seglen = len(sub(P1, P0));
-              float maxHandle = std::max(minHandle, seglen * clampK);
-              float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
-              float dirx1 = -dirx0;
-              T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
-              T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
-              XMFLOAT2 b0 = P0;
-              XMFLOAT2 b1 = addv(P0, mul(T0, 1.0f / 3.0f));
-              XMFLOAT2 b2 = sub(P1, mul(T1, 1.0f / 3.0f));
-              XMFLOAT2 b3 = P1;
-              const int samples = 24;
-              XMFLOAT2 prev = b0;
-              float local_best2 = FLT_MAX;
-              for (int s = 1; s <= samples; ++s) {
-                float t = (float)s / (float)samples;
-                XMFLOAT2 cur = bezier_eval(b0, b1, b2, b3, t);
-                float d2 = testSegment(prev, cur);
-                if (d2 < local_best2) local_best2 = d2;
-                prev = cur;
-              }
-              return local_best2;
-            };
+            const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
+            const float clampK = NodeEditorWindow::WIRE_CLAMP_K;
 
             // Shared path
             wi::vector<XMFLOAT2> shared_pts;
-            shared_pts.push_back(srcpos);
-            for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
-              const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
-              shared_pts.push_back(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
-            }
+            BuildSharedPathPoints(crow->anchorHubIds, srcpos, shared_pts);
             if (shared_pts.size() >= 2) {
               wi::vector<XMFLOAT2> compact;
               compact.reserve(shared_pts.size());
-              auto near_eq = [](const XMFLOAT2& a, const XMFLOAT2& b){ float dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy <= 1.0f; };
-              for (const auto& sp : shared_pts) { if (compact.empty() || !near_eq(compact.back(), sp)) compact.push_back(sp); }
+              for (const auto& sp : shared_pts) { if (compact.empty() || !v_near_eq(compact.back(), sp)) compact.push_back(sp); }
               if (compact.size() >= 2) shared_pts = std::move(compact);
             }
 
@@ -1161,10 +1143,10 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
               const XMFLOAT2& P1 = shared_pts[i + 1];
               XMFLOAT2 T0, T1;
               if (i == 0) { T0 = XMFLOAT2(+endpointBias, 0); }
-              else { const XMFLOAT2& Pm1 = shared_pts[i - 1]; T0 = mul(sub(shared_pts[i + 1], Pm1), 0.5f); }
-              if (i + 1 < shared_pts.size() - 1) { const XMFLOAT2& Pp2 = shared_pts[i + 2]; T1 = mul(sub(Pp2, P0), 0.5f); }
-              else { T1 = mul(sub(P1, P0), 0.5f); }
-              float d2 = segment_min_d2(P0, P1, T0, T1);
+              else { const XMFLOAT2& Pm1 = shared_pts[i - 1]; T0 = v_mul(v_sub(shared_pts[i + 1], Pm1), 0.5f); }
+              if (i + 1 < shared_pts.size() - 1) { const XMFLOAT2& Pp2 = shared_pts[i + 2]; T1 = v_mul(v_sub(Pp2, P0), 0.5f); }
+              else { T1 = v_mul(v_sub(P1, P0), 0.5f); }
+              float d2 = SegmentApproxMinDist2(p, P0, P1, T0, T1, minHandle, clampK);
               if (d2 < conn_best2) conn_best2 = d2;
             }
 
@@ -1188,9 +1170,9 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
               } else { ex = target_node->window.translation.x + 6.0f; ey = target_node->window.translation.y + target_node->window.scale.y * 0.5f; }
               const float endpointBias2 = NodeEditorWindow::WIRE_ENDPOINT_BIAS;
               const XMFLOAT2 P0 = shared_last; const XMFLOAT2 P1 = XMFLOAT2(ex, ey);
-              XMFLOAT2 T0 = has_prev ? mul(sub(P1, shared_prev), 0.5f) : XMFLOAT2(+endpointBias2, 0);
+              XMFLOAT2 T0 = has_prev ? v_mul(v_sub(P1, shared_prev), 0.5f) : XMFLOAT2(+endpointBias2, 0);
               XMFLOAT2 T1 = XMFLOAT2(+endpointBias2, 0);
-              float d2 = segment_min_d2(P0, P1, T0, T1);
+              float d2 = SegmentApproxMinDist2(p, P0, P1, T0, T1, minHandle, clampK);
               if (d2 < conn_best2) conn_best2 = d2;
             }
             if (conn_best2 < best_d2) { best_d2 = conn_best2; best = crow; }
@@ -1385,76 +1367,16 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
             }
             XMFLOAT2 srcpos(sx, sy);
 
-            auto testSegment = [&](const XMFLOAT2& A, const XMFLOAT2& B) {
-              XMFLOAT2 AB(B.x - A.x, B.y - A.y);
-              float ab2 = AB.x * AB.x + AB.y * AB.y;
-              float t = 0;
-              if (ab2 > 0) t = std::max(0.f, std::min(1.f, ((p.x - A.x) * AB.x + (p.y - A.y) * AB.y) / ab2));
-              XMFLOAT2 H(A.x + AB.x * t, A.y + AB.y * t);
-              float dx = p.x - H.x; float dy = p.y - H.y; return dx * dx + dy * dy;
-            };
-            auto sub = [](const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x - b.x, a.y - b.y); };
-            auto addv = [](const XMFLOAT2& a, const XMFLOAT2& b) { return XMFLOAT2(a.x + b.x, a.y + b.y); };
-            auto mul = [](const XMFLOAT2& a, float s) { return XMFLOAT2(a.x * s, a.y * s); };
-            auto len = [](const XMFLOAT2& v) { return std::sqrt(v.x * v.x + v.y * v.y); };
-            auto clamp_handle = [&](const XMFLOAT2& v, float minl, float maxl, float fallback_dirx) {
-              float L = len(v);
-              if (L < 1e-5f) {
-                float Lc = std::max(minl, std::min(maxl, minl));
-                return XMFLOAT2((fallback_dirx >= 0 ? 1.0f : -1.0f) * Lc, 0);
-              }
-              float Lc = std::max(minl, std::min(maxl, L));
-              float s = Lc / L;
-              return XMFLOAT2(v.x * s, v.y * s);
-            };
-            auto bezier_eval = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
-              const float it = 1.0f - t;
-              const float a = it * it * it;
-              const float b = 3.0f * it * it * t;
-              const float c = 3.0f * it * t * t;
-              const float d = t * t * t;
-              return XMFLOAT2(
-                a * p0.x + b * p1.x + c * p2.x + d * p3.x,
-                a * p0.y + b * p1.y + c * p2.y + d * p3.y);
-            };
-            auto segment_min_d2 = [&](const XMFLOAT2& P0, const XMFLOAT2& P1, XMFLOAT2 T0, XMFLOAT2 T1) -> float {
-              const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
-              const float clampK = NodeEditorWindow::WIRE_CLAMP_K;
-              float seglen = len(sub(P1, P0));
-              float maxHandle = std::max(minHandle, seglen * clampK);
-              float dirx0 = (P1.x - P0.x) >= 0 ? 1.0f : -1.0f;
-              float dirx1 = -dirx0;
-              T0 = clamp_handle(T0, std::min(minHandle, maxHandle), maxHandle, dirx0);
-              T1 = clamp_handle(T1, std::min(minHandle, maxHandle), maxHandle, dirx1);
-              XMFLOAT2 b0 = P0;
-              XMFLOAT2 b1 = addv(P0, mul(T0, 1.0f / 3.0f));
-              XMFLOAT2 b2 = sub(P1, mul(T1, 1.0f / 3.0f));
-              XMFLOAT2 b3 = P1;
-              const int samples = 24;
-              XMFLOAT2 prev = b0;
-              float local_best2 = FLT_MAX;
-              for (int s = 1; s <= samples; ++s) {
-                float t = (float)s / (float)samples;
-                XMFLOAT2 cur = bezier_eval(b0, b1, b2, b3, t);
-                float d2 = testSegment(prev, cur);
-                if (d2 < local_best2) local_best2 = d2;
-                prev = cur;
-              }
-              return local_best2;
-            };
+            const float minHandle = NodeEditorWindow::WIRE_MIN_HANDLE;
+            const float clampK = NodeEditorWindow::WIRE_CLAMP_K;
 
             // Shared path (source -> hubs): build once and compute min distance once
             wi::vector<XMFLOAT2> shared_pts;
-            shared_pts.push_back(srcpos);
-            for (size_t i = 0; i < crow->anchorHubIds.size(); ++i) {
-              const auto* hub = GetHub(crow->anchorHubIds[i]); if (!hub) continue;
-              shared_pts.push_back(XMFLOAT2(scrollable_area.translation.x + hub->pos.x, scrollable_area.translation.y + hub->pos.y));
-            }
+            BuildSharedPathPoints(crow->anchorHubIds, srcpos, shared_pts);
             if (shared_pts.size() >= 2) {
               wi::vector<XMFLOAT2> compact;
               compact.reserve(shared_pts.size());
-              auto near_eq = [](const XMFLOAT2& a, const XMFLOAT2& b){ float dx=a.x-b.x, dy=a.y-b.y; return dx*dx+dy*dy <= 1.0f; };
-              for (const auto& sp : shared_pts) { if (compact.empty() || !near_eq(compact.back(), sp)) compact.push_back(sp); }
+              for (const auto& sp : shared_pts) { if (compact.empty() || !v_near_eq(compact.back(), sp)) compact.push_back(sp); }
               if (compact.size() >= 2) shared_pts = std::move(compact);
             }
 
@@ -1468,15 +1390,15 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
                 T0 = XMFLOAT2(+endpointBias, 0);
               } else {
                 const XMFLOAT2& Pm1 = shared_pts[i - 1];
-                T0 = mul(sub(shared_pts[i + 1], Pm1), 0.5f);
+                T0 = v_mul(v_sub(shared_pts[i + 1], Pm1), 0.5f);
               }
               if (i + 1 < shared_pts.size() - 1) {
                 const XMFLOAT2& Pp2 = shared_pts[i + 2];
-                T1 = mul(sub(Pp2, P0), 0.5f);
+                T1 = v_mul(v_sub(Pp2, P0), 0.5f);
               } else {
-                T1 = mul(sub(P1, P0), 0.5f);
+                T1 = v_mul(v_sub(P1, P0), 0.5f);
               }
-              float d2 = segment_min_d2(P0, P1, T0, T1);
+              float d2 = SegmentApproxMinDist2(p, P0, P1, T0, T1, minHandle, clampK);
               if (d2 < conn_best2) conn_best2 = d2;
             }
             // Continue to test final legs per target and keep best distance
@@ -1510,12 +1432,12 @@ void NodeEditorWindow::Update(const wi::Canvas &canvas, float dt) {
               const XMFLOAT2 P1 = XMFLOAT2(ex, ey);
               XMFLOAT2 T0, T1;
               if (has_prev) {
-                T0 = mul(sub(P1, shared_prev), 0.5f);
+                T0 = v_mul(v_sub(P1, shared_prev), 0.5f);
               } else {
                 T0 = XMFLOAT2(+endpointBias2, 0);
               }
               T1 = XMFLOAT2(+endpointBias2, 0);
-              float d2 = segment_min_d2(P0, P1, T0, T1);
+              float d2 = SegmentApproxMinDist2(p, P0, P1, T0, T1, minHandle, clampK);
               if (d2 < conn_best2) conn_best2 = d2;
             }
             if (conn_best2 < best_d2) { best_d2 = conn_best2; best = crow; }

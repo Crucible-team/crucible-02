@@ -278,4 +278,11 @@ private:
   void Undo();
   void Redo();
 
+  // Build shared wire path points (screen space) from a source point through hubs
+  void BuildSharedPathPoints(const wi::vector<uint32_t>& hubIds, const XMFLOAT2& src, wi::vector<XMFLOAT2>& out_pts) const;
+  // Variant that also emits per-point tokens for de-duplication
+  void BuildSharedPathPointsAndTokens(const wi::vector<uint32_t>& hubIds, const XMFLOAT2& src,
+                                      uint64_t src_token, uint64_t tag_src, uint64_t tag_hub,
+                                      wi::vector<XMFLOAT2>& out_pts, wi::vector<uint64_t>& out_tokens) const;
+
 };
