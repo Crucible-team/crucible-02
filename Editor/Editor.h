@@ -14,6 +14,7 @@
 #include "GeneralWindow.h"
 #include "IconDefinitions.h"
 #include "json.hpp"
+#include "wiActionMap.h"
 
 
 class Editor;
@@ -280,6 +281,7 @@ class Editor : public wi::Application
 public:
 	EditorComponent renderComponent;
 	wi::config::File config;
+    wi::ActionMap actionMap;
 
 	void Initialize() override;
 
@@ -334,3 +336,4 @@ struct ApplicationExeCustomization
 	wi::Color background_color; // color of startup background behind startup text
 };
 extern ApplicationExeCustomization exe_customization;
+

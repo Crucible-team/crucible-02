@@ -78,6 +78,7 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)VideoWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)VoxelGridWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)WeatherWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)wiActionMap.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)xatlas.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">NotUsing</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">NotUsing</PrecompiledHeader>
@@ -149,6 +150,7 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)VideoWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)VoxelGridWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)WeatherWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)wiActionMap.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)xatlas.h" />
   </ItemGroup>
   <ItemGroup>

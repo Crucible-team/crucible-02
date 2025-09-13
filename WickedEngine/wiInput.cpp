@@ -1191,6 +1191,7 @@ namespace wi::input
 
 		switch (button)
 		{
+		case wi::input::BUTTON_NONE: return "None";
 		case wi::input::GAMEPAD_BUTTON_UP: return "Dpad ↑";
 		case wi::input::GAMEPAD_BUTTON_LEFT: return "Dpad ←";
 		case wi::input::GAMEPAD_BUTTON_DOWN: return "Dpad ↓";

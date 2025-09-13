@@ -156,3 +156,8 @@ endif()
 if (WICKED_WINDOWS_TEMPLATE)
     add_subdirectory(Samples/Template_Windows)
 endif()
+
+option(WICKED_GAME_SAMPLE "Build WickedEngine Game Exe" ON)
+if (WICKED_GAME_SAMPLE)
+    add_subdirectory(Samples/Game_EXE)
+endif()
