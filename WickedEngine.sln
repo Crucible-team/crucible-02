@@ -44,6 +44,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Example_ImGui", "Samples\Ex
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Example_ImGui_Docking", "Samples\Example_ImGui_Docking\Example_ImGui_Docking.vcxproj", "{5646F9FB-C9E3-4DA4-8AAA-EB7A46DD777E}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Game_Exe", "Samples\game_exe\Game_Exe.vcxproj", "{160C4AE8-A600-42E7-899F-30ACB5B002AA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -78,6 +80,10 @@ Global
 		{5646F9FB-C9E3-4DA4-8AAA-EB7A46DD777E}.Debug|x64.Build.0 = Debug|x64
 		{5646F9FB-C9E3-4DA4-8AAA-EB7A46DD777E}.Release|x64.ActiveCfg = Release|x64
 		{5646F9FB-C9E3-4DA4-8AAA-EB7A46DD777E}.Release|x64.Build.0 = Release|x64
+		{160C4AE8-A600-42E7-899F-30ACB5B002AA}.Debug|x64.ActiveCfg = Debug|x64
+		{160C4AE8-A600-42E7-899F-30ACB5B002AA}.Debug|x64.Build.0 = Debug|x64
+		{160C4AE8-A600-42E7-899F-30ACB5B002AA}.Release|x64.ActiveCfg = Release|x64
+		{160C4AE8-A600-42E7-899F-30ACB5B002AA}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -87,6 +93,7 @@ Global
 		{3A9EA3D0-A795-46ED-A737-7164E90DC309} = {F1ADB727-BCFC-4967-A8ED-BF943AAA5BF7}
 		{2B636202-EF12-43CF-8431-FA516F2E132C} = {F1ADB727-BCFC-4967-A8ED-BF943AAA5BF7}
 		{5646F9FB-C9E3-4DA4-8AAA-EB7A46DD777E} = {F1ADB727-BCFC-4967-A8ED-BF943AAA5BF7}
+		{160C4AE8-A600-42E7-899F-30ACB5B002AA} = {F1ADB727-BCFC-4967-A8ED-BF943AAA5BF7}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {E3FF044A-B72E-4ED5-BE05-AB641BA048CD}

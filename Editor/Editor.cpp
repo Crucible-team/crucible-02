@@ -1,56 +1,10 @@
 #include "stdafx.h"
 #include "wiRenderer.h"
 #include "wiScene_BindLua.h"
-
 #include "ModelImporter.h"
 #include "Translator.h"
 #include "DummyVisualizer.h"
-
-
-// some application parameters can be overwritten in the executable by finding the 256 byte long pattern in the first member:
-ApplicationExeCustomization exe_customization = {
-	"Wicked Editor                                                                                                          ",
-	wi::Color(130, 210, 220, 255),
-	wi::Color(17, 30, 43, 255)
-};
-
-using json = nlohmann::json;
-using namespace wi::graphics;
-using namespace wi::primitive;
-using namespace wi::scene;
-using namespace wi::ecs;
-
-enum class FileType
-{
-	INVALID,
-	LUA,
-	WISCENE,
-	OBJ,
-	GLTF,
-	GLB,
-	VRM,
-	VRMA,
-	FBX,
-	IMAGE,
-	VIDEO,
-	SOUND,
-	TEXT,
-	HEADER,
-	CPP,
-};
-static wi::unordered_map<std::string, FileType> filetypes = {
-	{"LUA", FileType::LUA},
-	{"WISCENE", FileType::WISCENE},
-	{"OBJ", FileType::OBJ},
-	{"GLTF", FileType::GLTF},
-	{"GLB", FileType::GLB},
-	{"VRM", FileType::VRM},
-	{"VRMA", FileType::VRMA},
-	{"FBX", FileType::FBX},
-	{"H", FileType::HEADER},
-	{"CPP", FileType::CPP},
-	{"TXT", FileType::TEXT},
-};
+#include "wiActionMap.h"
 
 enum class EditorActions
 {
@@ -112,14 +66,140 @@ enum class EditorActions
 
 	COUNT
 };
+
+static wi::unordered_map<EditorActions, std::string> g_remap_action_hotkeys = {  
+   {EditorActions::MOVE_CAMERA_FORWARD, "MOVE_CAMERA_FORWARD"},  
+   {EditorActions::MOVE_CAMERA_BACKWARD, "MOVE_CAMERA_BACKWARD"},  
+   {EditorActions::MOVE_CAMERA_LEFT, "MOVE_CAMERA_LEFT"},  
+   {EditorActions::MOVE_CAMERA_RIGHT, "MOVE_CAMERA_RIGHT"},  
+   {EditorActions::MOVE_CAMERA_UP, "MOVE_CAMERA_UP"},  
+   {EditorActions::MOVE_CAMERA_DOWN, "MOVE_CAMERA_DOWN"},  
+   {EditorActions::DUPLICATE_ENTITY, "DUPLICATE_ENTITY"},  
+   {EditorActions::SELECT_ALL_ENTITIES, "SELECT_ALL_ENTITIES"},  
+   {EditorActions::DESELECT_ALL_ENTITIES, "DESELECT_ALL_ENTITIES"},  
+   {EditorActions::FOCUS_ON_SELECTION, "FOCUS_ON_SELECTION"},  
+   {EditorActions::RENAME_SELECTED, "RENAME_SELECTED"},  
+   {EditorActions::UNDO_ACTION, "UNDO_ACTION"},  
+   {EditorActions::REDO_ACTION, "REDO_ACTION"},  
+   {EditorActions::COPY_ACTION, "COPY_ACTION"},  
+   {EditorActions::CUT_ACTION, "CUT_ACTION"},  
+   {EditorActions::PASTE_ACTION, "PASTE_ACTION"},  
+   {EditorActions::DELETE_ACTION, "DELETE_ACTION"},  
+   {EditorActions::MOVE_TOGGLE_ACTION, "MOVE_TOGGLE_ACTION"},  
+   {EditorActions::ROTATE_TOGGLE_ACTION, "ROTATE_TOGGLE_ACTION"},  
+   {EditorActions::SCALE_TOGGLE_ACTION, "SCALE_TOGGLE_ACTION"},  
+   {EditorActions::SCREENSHOT, "SCREENSHOT"},  
+   {EditorActions::SCREENSHOT_ALPHA, "SCREENSHOT_ALPHA"},  
+   {EditorActions::INSPECTOR_MODE, "INSPECTOR_MODE"},  
+   {EditorActions::PLACE_INSTANCES, "PLACE_INSTANCES"},  
+   {EditorActions::SAVE_SCENE_AS, "SAVE_SCENE_AS"},  
+   {EditorActions::SAVE_SCENE, "SAVE_SCENE"},  
+   {EditorActions::ENABLE_TRANSFORM_TOOL, "ENABLE_TRANSFORM_TOOL"},  
+   {EditorActions::WIREFRAME_MODE, "WIREFRAME_MODE"},  
+   {EditorActions::DEPTH_OF_FIELD_REFOCUS_TO_POINT, "DEPTH_OF_FIELD_REFOCUS_TO_POINT"},  
+   {EditorActions::COLOR_GRADING_REFERENCE, "COLOR_GRADING_REFERENCE"},  
+   {EditorActions::RAGDOLL_AND_PHYSICS_IMPULSE_TESTER, "RAGDOLL_AND_PHYSICS_IMPULSE_TESTER"},  
+   {EditorActions::ORTHO_CAMERA, "ORTHO_CAMERA"},  
+   {EditorActions::HIERARCHY_SELECT, "HIERARCHY_SELECT"},  
+   {EditorActions::ADD_TO_SPLINE, "ADD_TO_SPLINE"}  
+};
+
+void RegisterDefaultHotkeys(wi::ActionMap& actionMap)
+{
+    actionMap.RegisterAction("MOVE_CAMERA_FORWARD", {wi::input::BUTTON('W'), false, false, false, false});
+    actionMap.RegisterAction("MOVE_CAMERA_BACKWARD", {wi::input::BUTTON('S'), false, false, false, false});
+    actionMap.RegisterAction("MOVE_CAMERA_LEFT", {wi::input::BUTTON('A'), false, false, false, false});
+    actionMap.RegisterAction("MOVE_CAMERA_RIGHT", {wi::input::BUTTON('D'), false, false, false, false});
+    actionMap.RegisterAction("MOVE_CAMERA_UP", {wi::input::BUTTON('E'), false, false, false, false});
+    actionMap.RegisterAction("MOVE_CAMERA_DOWN", {wi::input::BUTTON('Q'), false, false, false, false});
+    actionMap.RegisterAction("DUPLICATE_ENTITY", {wi::input::BUTTON('D'), true, true, false, false});
+    actionMap.RegisterAction("SELECT_ALL_ENTITIES", {wi::input::BUTTON('A'), true, true, false, false});
+    actionMap.RegisterAction("DESELECT_ALL_ENTITIES", {wi::input::BUTTON::KEYBOARD_BUTTON_ESCAPE, true, false, false, false});
+    actionMap.RegisterAction("FOCUS_ON_SELECTION", {wi::input::BUTTON('F'), false, false, false, false});
+    actionMap.RegisterAction("RENAME_SELECTED", {wi::input::BUTTON::KEYBOARD_BUTTON_F2, true, false, false, false});
+    actionMap.RegisterAction("UNDO_ACTION", {wi::input::BUTTON('Z'), true, true, false, false});
+    actionMap.RegisterAction("REDO_ACTION", {wi::input::BUTTON('Y'), true, true, false, false});
+    actionMap.RegisterAction("COPY_ACTION", {wi::input::BUTTON('C'), true, true, false, false});
+    actionMap.RegisterAction("CUT_ACTION", {wi::input::BUTTON('X'), true, true, false, false});
+    actionMap.RegisterAction("PASTE_ACTION", {wi::input::BUTTON('V'), true, true, false, false});
+    actionMap.RegisterAction("DELETE_ACTION", {wi::input::BUTTON::KEYBOARD_BUTTON_DELETE, true, false, false, false});
+    actionMap.RegisterAction("MOVE_TOGGLE_ACTION", {wi::input::BUTTON('1'), true, false, false, false});
+    actionMap.RegisterAction("ROTATE_TOGGLE_ACTION", {wi::input::BUTTON('2'), true, false, false, false});
+    actionMap.RegisterAction("SCALE_TOGGLE_ACTION", {wi::input::BUTTON('3'), true, false, false, false});
+    actionMap.RegisterAction("SCREENSHOT", {wi::input::BUTTON::KEYBOARD_BUTTON_F3, true, false, false, false});
+    actionMap.RegisterAction("SCREENSHOT_ALPHA", {wi::input::BUTTON::KEYBOARD_BUTTON_F4, true, false, false, false});
+    actionMap.RegisterAction("INSPECTOR_MODE", {wi::input::BUTTON('I'), false, false, false, false});
+    actionMap.RegisterAction("PLACE_INSTANCES", {wi::input::BUTTON::MOUSE_BUTTON_LEFT, true, true, true, false});
+    actionMap.RegisterAction("SAVE_SCENE_AS", {wi::input::BUTTON('S'), true, true, true, false});
+    actionMap.RegisterAction("SAVE_SCENE", {wi::input::BUTTON('S'), true, true, false, false});
+    actionMap.RegisterAction("ENABLE_TRANSFORM_TOOL", {wi::input::BUTTON('T'), true, true, false, false});
+    actionMap.RegisterAction("WIREFRAME_MODE", {wi::input::BUTTON('W'), true, true, false, false});
+    actionMap.RegisterAction("DEPTH_OF_FIELD_REFOCUS_TO_POINT", {wi::input::BUTTON('C'), false, false, false, false});
+    actionMap.RegisterAction("COLOR_GRADING_REFERENCE", {wi::input::BUTTON('G'), false, true, false, false});
+    actionMap.RegisterAction("RAGDOLL_AND_PHYSICS_IMPULSE_TESTER", {wi::input::BUTTON('P'), false, false, false, false});
+    actionMap.RegisterAction("ORTHO_CAMERA", {wi::input::BUTTON('O'), true, false, false, false});
+    actionMap.RegisterAction("HIERARCHY_SELECT", {wi::input::BUTTON('H'), true, false, false, false});
+    actionMap.RegisterAction("ADD_TO_SPLINE", {wi::input::BUTTON('E'), true, true, false, false});
+}
+
+
+// some application parameters can be overwritten in the executable by finding the 256 byte long pattern in the first member:
+ApplicationExeCustomization exe_customization = {
+	"Wicked Editor                                                                                                          ",
+	wi::Color(130, 210, 220, 255),
+	wi::Color(17, 30, 43, 255)
+};
+
+using json = nlohmann::json;
+using namespace wi::graphics;
+using namespace wi::primitive;
+using namespace wi::scene;
+using namespace wi::ecs;
+
+enum class FileType
+{
+	INVALID,
+	LUA,
+	WISCENE,
+	OBJ,
+	GLTF,
+	GLB,
+	VRM,
+	VRMA,
+	FBX,
+	IMAGE,
+	VIDEO,
+	SOUND,
+	TEXT,
+	HEADER,
+	CPP,
+};
+static wi::unordered_map<std::string, FileType> filetypes = {
+	{"LUA", FileType::LUA},
+	{"WISCENE", FileType::WISCENE},
+	{"OBJ", FileType::OBJ},
+	{"GLTF", FileType::GLTF},
+	{"GLB", FileType::GLB},
+	{"VRM", FileType::VRM},
+	{"VRMA", FileType::VRMA},
+	{"FBX", FileType::FBX},
+	{"H", FileType::HEADER},
+	{"CPP", FileType::CPP},
+	{"TXT", FileType::TEXT},
+};
+
+
+
+
 struct HotkeyInfo
 {
 	wi::input::BUTTON button;
 	bool press = false;
 	bool control = false;
 	bool shift = false;
+	bool alt = false;
 };
-HotkeyInfo hotkeyActions[size_t(EditorActions::COUNT)] = {
+HotkeyInfo internal_hotkeyActions[size_t(EditorActions::COUNT)] = {
 	{wi::input::BUTTON('W'),					/*press=*/ false,		/*control=*/ false,		/*shift=*/ false},	//MOVE_CAMERA_FORWARD,
 	{wi::input::BUTTON('S'),					/*press=*/ false,		/*control=*/ false,		/*shift=*/ false},	//MOVE_CAMERA_BACKWARD,
 	{wi::input::BUTTON('A'),					/*press=*/ false,		/*control=*/ false,		/*shift=*/ false},	//MOVE_CAMERA_LEFT,
@@ -155,14 +235,77 @@ HotkeyInfo hotkeyActions[size_t(EditorActions::COUNT)] = {
 	{wi::input::BUTTON('H'),					/*press=*/ true,		/*control=*/ false,		/*shift=*/ false},	//HIERARCHY_SELECT,
 	{wi::input::BUTTON('E'),					/*press=*/ true,		/*control=*/ true,		/*shift=*/ false},	//ADD_TO_SPLINE,
 };
-static_assert(arraysize(hotkeyActions) == size_t(EditorActions::COUNT));
-bool CheckInput(EditorActions action)
+static_assert(arraysize(internal_hotkeyActions) == size_t(EditorActions::COUNT));
+// Global map to store hotkey configurations by action name string
+static wi::unordered_map<std::string, HotkeyInfo> g_action_hotkeys = {
+		{"MOVE_CAMERA_FORWARD", internal_hotkeyActions[size_t(EditorActions::MOVE_CAMERA_FORWARD)]},
+		{"MOVE_CAMERA_BACKWARD", internal_hotkeyActions[size_t(EditorActions::MOVE_CAMERA_BACKWARD)]},
+		{"MOVE_CAMERA_LEFT", internal_hotkeyActions[size_t(EditorActions::MOVE_CAMERA_LEFT)]},
+		{"MOVE_CAMERA_RIGHT", internal_hotkeyActions[size_t(EditorActions::MOVE_CAMERA_RIGHT)]},
+		{"MOVE_CAMERA_UP", internal_hotkeyActions[size_t(EditorActions::MOVE_CAMERA_UP)]},
+		{"MOVE_CAMERA_DOWN", internal_hotkeyActions[size_t(EditorActions::MOVE_CAMERA_DOWN)]},
+		{"DUPLICATE_ENTITY", internal_hotkeyActions[size_t(EditorActions::DUPLICATE_ENTITY)]},
+		{"SELECT_ALL_ENTITIES", internal_hotkeyActions[size_t(EditorActions::SELECT_ALL_ENTITIES)]},
+		{"DESELECT_ALL_ENTITIES", internal_hotkeyActions[size_t(EditorActions::DESELECT_ALL_ENTITIES)]},
+		{"FOCUS_ON_SELECTION", internal_hotkeyActions[size_t(EditorActions::FOCUS_ON_SELECTION)]},
+		{"RENAME_SELECTED", internal_hotkeyActions[size_t(EditorActions::RENAME_SELECTED)]},
+		{"UNDO_ACTION", internal_hotkeyActions[size_t(EditorActions::UNDO_ACTION)]},
+		{"REDO_ACTION", internal_hotkeyActions[size_t(EditorActions::REDO_ACTION)]},
+		{"COPY_ACTION", internal_hotkeyActions[size_t(EditorActions::COPY_ACTION)]},
+		{"CUT_ACTION", internal_hotkeyActions[size_t(EditorActions::CUT_ACTION)]},
+		{"PASTE_ACTION", internal_hotkeyActions[size_t(EditorActions::PASTE_ACTION)]},
+		{"DELETE_ACTION", internal_hotkeyActions[size_t(EditorActions::DELETE_ACTION)]},
+		{"MOVE_TOGGLE_ACTION", internal_hotkeyActions[size_t(EditorActions::MOVE_TOGGLE_ACTION)]},
+		{"ROTATE_TOGGLE_ACTION", internal_hotkeyActions[size_t(EditorActions::ROTATE_TOGGLE_ACTION)]},
+		{"SCALE_TOGGLE_ACTION", internal_hotkeyActions[size_t(EditorActions::SCALE_TOGGLE_ACTION)]},
+		{"MAKE_NEW_SCREENSHOT", internal_hotkeyActions[size_t(EditorActions::SCREENSHOT)]},
+		{"MAKE_NEW_SCREENSHOT_ALPHA", internal_hotkeyActions[size_t(EditorActions::SCREENSHOT_ALPHA)]},
+		{"INSPECTOR_MODE", internal_hotkeyActions[size_t(EditorActions::INSPECTOR_MODE)]},
+		{"PLACE_INSTANCES", internal_hotkeyActions[size_t(EditorActions::PLACE_INSTANCES)]},
+		{"SAVE_SCENE_AS", internal_hotkeyActions[size_t(EditorActions::SAVE_SCENE_AS)]},
+		{"SAVE_SCENE", internal_hotkeyActions[size_t(EditorActions::SAVE_SCENE)]},
+		{"ENABLE_TRANSFORM_TOOL", internal_hotkeyActions[size_t(EditorActions::ENABLE_TRANSFORM_TOOL)]},
+		{"WIREFRAME_MODE", internal_hotkeyActions[size_t(EditorActions::WIREFRAME_MODE)]},
+		{"DEPTH_OF_FIELD_REFOCUS_TO_POINT", internal_hotkeyActions[size_t(EditorActions::DEPTH_OF_FIELD_REFOCUS_TO_POINT)]},
+		{"COLOR_GRADING_REFERENCE", internal_hotkeyActions[size_t(EditorActions::COLOR_GRADING_REFERENCE)]},
+		{"RAGDOLL_AND_PHYSICS_IMPULSE_TESTER", internal_hotkeyActions[size_t(EditorActions::RAGDOLL_AND_PHYSICS_IMPULSE_TESTER)]},
+		{"ORTHO_CAMERA", internal_hotkeyActions[size_t(EditorActions::ORTHO_CAMERA)]},
+		{"HIERARCHY_SELECT", internal_hotkeyActions[size_t(EditorActions::HIERARCHY_SELECT)]},
+		{"ADD_TO_SPLINE", internal_hotkeyActions[size_t(EditorActions::ADD_TO_SPLINE)]},
+};
+
+
+
+HotkeyInfo GetHotkey(std::string action_name)
 {
-	const HotkeyInfo& hotkey = hotkeyActions[size_t(action)];
+	auto it = g_action_hotkeys.find(action_name);
+	if (it != g_action_hotkeys.end())
+	{
+		return it->second;
+	}
+	// Return a default HotkeyInfo if action_name is not found
+	return { wi::input::BUTTON_NONE, false, false, false, false };
+}
+bool CheckInput(const std::string& action_name, bool press = false, bool Release = false, bool hold = false)
+{
+	auto it = g_action_hotkeys.find(wi::helper::toUpper(action_name));
+	if (it == g_action_hotkeys.end())
+	{
+		return false;
+	}
+	const HotkeyInfo& hotkey = it->second;
 	bool ret = false;
-	if (hotkey.press)
+	if (press)
 	{
 		ret |= wi::input::Press(hotkey.button);
+	}
+	else if (Release)
+	{
+		ret |= wi::input::Release(hotkey.button);
+	}
+	else if (hold)
+	{
+		ret |= wi::input::Hold(hotkey.button);
 	}
 	else
 	{
@@ -172,135 +315,188 @@ bool CheckInput(EditorActions action)
 	{
 		ret &= wi::input::Down(wi::input::KEYBOARD_BUTTON_LCONTROL) || wi::input::Down(wi::input::KEYBOARD_BUTTON_RCONTROL);
 	}
+	if (hotkey.alt) {
+		ret &= wi::input::Down(wi::input::KEYBOARD_BUTTON_ALT) || wi::input::Down(wi::input::KEYBOARD_BUTTON_ALTGR);
+	}
 	if (hotkey.shift)
 	{
 		ret &= wi::input::Down(wi::input::KEYBOARD_BUTTON_LSHIFT) || wi::input::Down(wi::input::KEYBOARD_BUTTON_RSHIFT);
 	}
 	return ret;
 }
-std::string GetInputString(EditorActions action)
+
+
+
+bool CheckInputDown(const std::string& action_name)
 {
-	const HotkeyInfo& hotkey = hotkeyActions[size_t(action)];
+	return CheckInput(action_name);
+}
+
+bool CheckInputPress(const std::string& action_name)
+{
+	return CheckInput(action_name,true);
+}
+bool CheckInputRelease(const std::string& action_name)
+{
+	return CheckInput(action_name, false,true);
+}
+bool CheckInputHold(const std::string& action_name)
+{
+	return CheckInput(action_name, false, false,true);
+}
+std::string GetInputString(const std::string& action_name)
+{
+	auto it = g_action_hotkeys.find(wi::helper::toUpper(action_name));
+	if (it == g_action_hotkeys.end())
+	{
+		return "No Action"; // Or some default string
+	}
+	const HotkeyInfo& hotkey = it->second;
 	std::string ret = wi::input::ButtonToString(hotkey.button).text;
+
 	if (hotkey.shift)
 	{
 		ret = "Shift + " + ret;
 	}
+
+	if ((hotkey.alt))
+	{
+		ret = "Alt + " + ret;
+	}
+
 	if (hotkey.control)
 	{
 		ret = "Ctrl + " + ret;
 	}
+
+	
 	return ret;
 }
+
+std::string GetInputString(EditorActions action)
+{
+	return GetInputString(g_remap_action_hotkeys[action]);
+}
+
+bool CheckInput(EditorActions action)
+{
+	auto Hotkey = GetHotkey(g_remap_action_hotkeys[action]);
+	if (Hotkey.button != wi::input::BUTTON_NONE)
+	{
+		if (Hotkey.press)
+			return CheckInput(g_remap_action_hotkeys[action], true);
+		else
+			return CheckInput(g_remap_action_hotkeys[action]);
+	}
+	return false;
+
+}
+/*static std::optional<HotkeyInfo>
+ParseHotkeyString(const std::string& hotkey)
+{
+	HotkeyInfo out{};
+	std::string hotkeyUpper = wi::helper::toUpper(hotkey);
+
+	std::istringstream iss(hotkeyUpper);
+	std::string token, lastNonMod;
+	out.button = wi::input::BUTTON_NONE;
+	while (std::getline(iss, token, '+'))
+	{
+		if (token.empty()) continue;
+		// ctrl
+		if (token == "CTRL" || token == "CONTROL" || token == "LCTRL" || token == "RCTRL") {
+			out.control = true;
+			continue;
+		}
+		// shift
+		if (token == "SHIFT" || token == "LSHIFT" || token == "RSHIFT") {
+			out.shift = true;
+			continue;
+		}
+		// alt / option
+		if (token == "ALT" || token == "OPTION" || token == "LALT" || token == "RALT") {
+			out.alt = true;
+			continue;
+		}
+
+		// Last non-modifier wins
+		lastNonMod = token;
+	}
+
+	if (lastNonMod.empty())
+		return std::nullopt;
+
+	// Named key?
+	if (auto it = buttonMap.find(lastNonMod); it != buttonMap.end()) {
+		out.button = it->second;
+	}
+	else if (lastNonMod.size() == 1) {
+		unsigned char c = static_cast<unsigned char>(lastNonMod[0]);
+		if (std::isalnum(c)) {
+			out.button = wi::input::BUTTON(c); // single alnum fallback (A–Z, 0–9)
+		}
+	}
+
+	return out;
+}
+
 void HotkeyRemap(Editor* main)
 {
-	static const wi::unordered_map<std::string, EditorActions> actionMap = {
-		{"MOVE_CAMERA_FORWARD", EditorActions::MOVE_CAMERA_FORWARD},
-		{"MOVE_CAMERA_BACKWARD", EditorActions::MOVE_CAMERA_BACKWARD},
-		{"MOVE_CAMERA_LEFT", EditorActions::MOVE_CAMERA_LEFT},
-		{"MOVE_CAMERA_RIGHT", EditorActions::MOVE_CAMERA_RIGHT},
-		{"MOVE_CAMERA_UP", EditorActions::MOVE_CAMERA_UP},
-		{"MOVE_CAMERA_DOWN", EditorActions::MOVE_CAMERA_DOWN},
-		{"DUPLICATE_ENTITY", EditorActions::DUPLICATE_ENTITY},
-		{"SELECT_ALL_ENTITIES", EditorActions::SELECT_ALL_ENTITIES},
-		{"DESELECT_ALL_ENTITIES", EditorActions::DESELECT_ALL_ENTITIES},
-		{"FOCUS_ON_SELECTION", EditorActions::FOCUS_ON_SELECTION},
-		{"RENAME_SELECTED", EditorActions::RENAME_SELECTED},
-		{"UNDO_ACTION", EditorActions::UNDO_ACTION},
-		{"REDO_ACTION", EditorActions::REDO_ACTION},
-		{"COPY_ACTION", EditorActions::COPY_ACTION},
-		{"CUT_ACTION", EditorActions::CUT_ACTION},
-		{"PASTE_ACTION", EditorActions::PASTE_ACTION},
-		{"DELETE_ACTION", EditorActions::DELETE_ACTION},
-		{"MOVE_TOGGLE_ACTION", EditorActions::MOVE_TOGGLE_ACTION},
-		{"ROTATE_TOGGLE_ACTION", EditorActions::ROTATE_TOGGLE_ACTION},
-		{"SCALE_TOGGLE_ACTION", EditorActions::SCALE_TOGGLE_ACTION},
-		{"MAKE_NEW_SCREENSHOT", EditorActions::SCREENSHOT},
-		{"MAKE_NEW_SCREENSHOT_ALPHA", EditorActions::SCREENSHOT_ALPHA},
-		{"INSPECTOR_MODE", EditorActions::INSPECTOR_MODE},
-		{"PLACE_INSTANCES", EditorActions::PLACE_INSTANCES},
-		{"SAVE_SCENE_AS", EditorActions::SAVE_SCENE_AS},
-		{"SAVE_SCENE", EditorActions::SAVE_SCENE},
-		{"ENABLE_TRANSFORM_TOOL", EditorActions::ENABLE_TRANSFORM_TOOL},
-		{"WIREFRAME_MODE", EditorActions::WIREFRAME_MODE},
-		{"DEPTH_OF_FIELD_REFOCUS_TO_POINT", EditorActions::DEPTH_OF_FIELD_REFOCUS_TO_POINT},
-		{"COLOR_GRADING_REFERENCE", EditorActions::COLOR_GRADING_REFERENCE},
-		{"RAGDOLL_AND_PHYSICS_IMPULSE_TESTER", EditorActions::RAGDOLL_AND_PHYSICS_IMPULSE_TESTER},
-		{"ORTHO_CAMERA", EditorActions::ORTHO_CAMERA},
-		{"HIERARCHY_SELECT", EditorActions::HIERARCHY_SELECT},
-	};
-	static const wi::unordered_map<std::string, wi::input::BUTTON> buttonMap = {
-		{"ESC", wi::input::KEYBOARD_BUTTON_ESCAPE},
-		{"INSERT", wi::input::KEYBOARD_BUTTON_INSERT},
-		{"DELETE", wi::input::KEYBOARD_BUTTON_DELETE},
-		{"HOME", wi::input::KEYBOARD_BUTTON_HOME},
-		{"PAGEUP", wi::input::KEYBOARD_BUTTON_PAGEUP},
-		{"PAGEDOWN", wi::input::KEYBOARD_BUTTON_PAGEDOWN},
-		{"MOUSELEFT", wi::input::MOUSE_BUTTON_LEFT},
-		{"MOUSERIGHT", wi::input::MOUSE_BUTTON_RIGHT},
-		{"F1", wi::input::KEYBOARD_BUTTON_F1},
-		{"F2", wi::input::KEYBOARD_BUTTON_F2},
-		{"F3", wi::input::KEYBOARD_BUTTON_F3},
-		{"F4", wi::input::KEYBOARD_BUTTON_F4},
-		{"F5", wi::input::KEYBOARD_BUTTON_F5},
-		{"F6", wi::input::KEYBOARD_BUTTON_F6},
-		{"F7", wi::input::KEYBOARD_BUTTON_F7},
-		{"F8", wi::input::KEYBOARD_BUTTON_F8},
-		{"F9", wi::input::KEYBOARD_BUTTON_F9},
-		{"F10", wi::input::KEYBOARD_BUTTON_F10},
-		{"F11", wi::input::KEYBOARD_BUTTON_F11},
-		{"F12", wi::input::KEYBOARD_BUTTON_F12}
-	};
+
+
+	static bool actionMap_loaded = false;
+
+	if (!actionMap_loaded)
+	{
+		actionMap_loaded = true;
+		wi::config::Section action_names_section = main->config.GetSection("default_hotkeys");
+
+		for (auto& it : action_names_section)
+		{
+			const std::string& internal_name = wi::helper::toUpper(it.first);
+			const std::string& action_info = it.second;
+			auto itAction = g_action_hotkeys.find(internal_name);
+			if (itAction == g_action_hotkeys.end())
+			{
+				if (auto parsed = ParseHotkeyString(action_info))
+				{
+					HotkeyInfo dst = HotkeyInfo{ parsed->button, true, parsed->control, parsed->shift, parsed->alt };
+					g_action_hotkeys[wi::helper::toUpper(internal_name)] = dst;
+				}
+				else
+				{
+
+					HotkeyInfo dst = GetHotkey(internal_name);
+					g_action_hotkeys[wi::helper::toUpper(internal_name)] = dst;
+				}
+			}
+			else
+			{
+				HotkeyInfo defaultHotkeyInfo = itAction->second;
+				if (auto parsed = ParseHotkeyString(action_info))
+				{
+					HotkeyInfo dst = defaultHotkeyInfo;
+					// preserve existing press behavior:
+					dst = HotkeyInfo{ parsed->button, dst.press, parsed->control, parsed->shift, parsed->alt };
+					g_action_hotkeys[wi::helper::toUpper(internal_name)] = dst;
+				}
+			}
+		}
+	}
 
 	wi::config::Section hotkeyssection = main->config.GetSection("hotkeys");
 	for (auto& x : hotkeyssection)
 	{
-		auto itAction = actionMap.find(wi::helper::toUpper(x.first));
-		if (itAction == actionMap.end())
+		auto itAction = g_action_hotkeys.find(wi::helper::toUpper(x.first));
+		if (itAction == g_action_hotkeys.end())
 			continue;
-		EditorActions action = itAction->second;
-		std::string hotkeyString = wi::helper::toUpper(x.second);
-		wi::input::BUTTON button = wi::input::BUTTON_NONE;
-
-		// Find the main key from the whole hotkey string:
-		std::string firstNonModifierKey;
-		std::istringstream iss(hotkeyString);
-		std::string token;
-		while (std::getline(iss, token, '+'))
+		if (auto parsed = ParseHotkeyString(x.second))
 		{
-			if (token != "CTRL" && token != "SHIFT" && !token.empty())
-			{
-				firstNonModifierKey = token;
-			}
-		}
-
-		// Try to find the key in the map
-		auto itButton = buttonMap.find(firstNonModifierKey);
-		if (itButton != buttonMap.end())
-		{
-			button = itButton->second;
-		}
-		else
-		{
-			// Cast individual key to button
-			if (firstNonModifierKey.length() == 1)
-			{
-				char c = firstNonModifierKey[0];
-				if (std::isalnum(c))
-				{
-					button = wi::input::BUTTON(c);
-				}
-			}
-		}
-
-		// Remap hotkey if button is successfully found:
-		if (button != wi::input::BUTTON_NONE)
-		{
-				
-			hotkeyActions[size_t(action)] = HotkeyInfo{ button, hotkeyActions[size_t(action)].press, hotkeyString.find("CTRL") != std::string::npos, hotkeyString.find("SHIFT") != std::string::npos };
+			HotkeyInfo dst = HotkeyInfo{ parsed->button, g_action_hotkeys[wi::helper::toUpper(x.first)].press, parsed->control, parsed->shift, parsed->alt };
+			g_action_hotkeys[wi::helper::toUpper(x.first)] = dst;
 		}
 	}
-}
+}*/
 
 void Editor::Initialize()
 {
@@ -462,7 +658,8 @@ void EditorComponent::ResizeLayout()
 void EditorComponent::Load()
 {
 	//Load hotkeys here
-	HotkeyRemap(main);
+	RegisterDefaultHotkeys(main->actionMap);
+    main->actionMap.LoadFromConfig(main->config.GetSection("hotkeys"));
 
 	wi::gui::CheckBox::SetCheckTextGlobal(ICON_CHECK);
 
@@ -1699,7 +1896,7 @@ void EditorComponent::Update(float dt)
 
 	main->canvas.scaling = float(guiScalingCombo.GetSelectedUserdata()) / 100.0f;
 
-	if (CheckInput(EditorActions::SCREENSHOT))
+	if (main->actionMap.CheckInput(g_remap_action_hotkeys[EditorActions::SCREENSHOT]))
 	{
 		std::string filename = wi::helper::screenshot(main->swapChain);
 		PostSaveText(filename);
@@ -1712,7 +1909,7 @@ void EditorComponent::Update(float dt)
 			PostSaveText("Screenshot saved: ", filename);
 		}
 	}
-	if (CheckInput(EditorActions::SCREENSHOT_ALPHA))
+	if (main->actionMap.CheckInput(g_remap_action_hotkeys[EditorActions::SCREENSHOT_ALPHA]))
 	{
 		std::string filename = wi::helper::screenshot(renderPath->CreateScreenshotWithAlphaBackground());
 		PostSaveText(filename);
@@ -1752,7 +1949,7 @@ void EditorComponent::Update(float dt)
 	save_text_alpha = std::max(0.0f, save_text_alpha - std::min(dt, 0.033f)); // after saving, dt can become huge
 
 	bool clear_selected = false;
-	if (CheckInput(EditorActions::DESELECT_ALL_ENTITIES))
+	if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::DESELECT_ALL_ENTITIES)]))
 	{
 		if (!GetGUI().IsVisible())
 		{
@@ -1825,7 +2022,7 @@ void EditorComponent::Update(float dt)
 				}
 				drive_orbit_horizontal += wi::input::GetAnalog(wi::input::GAMEPAD_ANALOG_THUMBSTICK_R).x * XM_PI * dt;
 
-				if (CheckInput(EditorActions::MOVE_CAMERA_FORWARD))
+				if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_CAMERA_FORWARD)]))
 				{
 					if (velocityAmount >= 0)
 					{
@@ -1836,7 +2033,7 @@ void EditorComponent::Update(float dt)
 						brake = 1;
 					}
 				}
-				else if (CheckInput(EditorActions::MOVE_CAMERA_BACKWARD))
+				else if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_CAMERA_BACKWARD)]))
 				{
 					if (velocityAmount > 0.001f)
 					{
@@ -1847,11 +2044,11 @@ void EditorComponent::Update(float dt)
 						forward = -1;
 					}
 				}
-				if (CheckInput(EditorActions::MOVE_CAMERA_LEFT))
+				if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_CAMERA_LEFT)]))
 				{
 					drive_steering_smoothed -= dt * 2;
 				}
-				else if (CheckInput(EditorActions::MOVE_CAMERA_RIGHT))
+				else if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_CAMERA_RIGHT)]))
 				{
 					drive_steering_smoothed += dt * 2;
 				}
@@ -1909,7 +2106,7 @@ void EditorComponent::Update(float dt)
 		drive_orbit_horizontal = lerp(drive_orbit_horizontal, 0.0f, dt);
 	}
 
-	if (!GetGUI().IsTyping() && !translator.selected.empty() && CheckInput(EditorActions::RENAME_SELECTED))
+	if (!GetGUI().IsTyping() && !translator.selected.empty() && main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::RENAME_SELECTED)]))
 	{
 		for (auto& x : translator.selected)
 		{
@@ -1926,7 +2123,7 @@ void EditorComponent::Update(float dt)
 	// Camera control:
 	if (!drive_mode && !wi::backlog::isActive() && !GetGUI().HasFocus())
 	{
-		deleting = CheckInput(EditorActions::DELETE_ACTION);
+		deleting = main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::DELETE_ACTION)]);
 		currentMouse = wi::input::GetPointer();
 		if (camControlStart)
 		{
@@ -1995,14 +2192,14 @@ void EditorComponent::Update(float dt)
 		yDif *= cameraWnd.rotationspeedSlider.GetValue();
 
 
-		if (CheckInput(EditorActions::ORTHO_CAMERA))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::ORTHO_CAMERA)]))
 		{
 			camera.SetOrtho(!camera.IsOrtho());
 			camera.ortho_vertical_size = camera.ComputeOrthoVerticalSizeFromPerspective(wi::math::Length(camera.Eye)); // camera distance from origin
 			cameraWnd.orthoCheckBox.SetCheck(camera.IsOrtho());
 		}
 
-		if (CheckInput(EditorActions::HIERARCHY_SELECT))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::HIERARCHY_SELECT)]))
 		{
 			wi::vector<Entity> children;
 			for (auto& x : translator.selectedEntitiesNonRecursive)
@@ -2015,7 +2212,7 @@ void EditorComponent::Update(float dt)
 			}
 		}
 
-		if (CheckInput(EditorActions::ADD_TO_SPLINE) && componentsWnd.splineWnd.entity != INVALID_ENTITY)
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::ADD_TO_SPLINE)]) && componentsWnd.splineWnd.entity != INVALID_ENTITY)
 		{
 			componentsWnd.splineWnd.NewNode();
 		}
@@ -2032,12 +2229,12 @@ void EditorComponent::Update(float dt)
 			if (!wi::input::Down(wi::input::KEYBOARD_BUTTON_LCONTROL))
 			{
 				// Only move camera if control not pressed
-				if (CheckInput(EditorActions::MOVE_CAMERA_LEFT) || wi::input::Down(wi::input::GAMEPAD_BUTTON_LEFT)) { moveNew += XMVectorSet(-1, 0, 0, 0); }
-				if (CheckInput(EditorActions::MOVE_CAMERA_RIGHT) || wi::input::Down(wi::input::GAMEPAD_BUTTON_RIGHT)) { moveNew += XMVectorSet(1, 0, 0, 0); }
-				if (CheckInput(EditorActions::MOVE_CAMERA_FORWARD) || wi::input::Down(wi::input::GAMEPAD_BUTTON_UP)) { moveNew += XMVectorSet(0, 0, 1, 0); camera.ortho_vertical_size -= 0.1f; }
-				if (CheckInput(EditorActions::MOVE_CAMERA_BACKWARD) || wi::input::Down(wi::input::GAMEPAD_BUTTON_DOWN)) { moveNew += XMVectorSet(0, 0, -1, 0); camera.ortho_vertical_size += 0.1f; }
-				if (CheckInput(EditorActions::MOVE_CAMERA_UP) || wi::input::Down(wi::input::GAMEPAD_BUTTON_2)) { moveNew += XMVectorSet(0, 1, 0, 0); }
-				if (CheckInput(EditorActions::MOVE_CAMERA_DOWN) || wi::input::Down(wi::input::GAMEPAD_BUTTON_1)) { moveNew += XMVectorSet(0, -1, 0, 0); }
+				if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_CAMERA_LEFT)]) || wi::input::Down(wi::input::GAMEPAD_BUTTON_LEFT)) { moveNew += XMVectorSet(-1, 0, 0, 0); }
+				if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_CAMERA_RIGHT)]) || wi::input::Down(wi::input::GAMEPAD_BUTTON_RIGHT)) { moveNew += XMVectorSet(1, 0, 0, 0); }
+				if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_CAMERA_FORWARD)]) || wi::input::Down(wi::input::GAMEPAD_BUTTON_UP)) { moveNew += XMVectorSet(0, 0, 1, 0); camera.ortho_vertical_size -= 0.1f; }
+				if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_CAMERA_BACKWARD)]) || wi::input::Down(wi::input::GAMEPAD_BUTTON_DOWN)) { moveNew += XMVectorSet(0, 0, -1, 0); camera.ortho_vertical_size += 0.1f; }
+				if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_CAMERA_UP)]) || wi::input::Down(wi::input::GAMEPAD_BUTTON_2)) { moveNew += XMVectorSet(0, 1, 0, 0); }
+				if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_CAMERA_DOWN)]) || wi::input::Down(wi::input::GAMEPAD_BUTTON_1)) { moveNew += XMVectorSet(0, -1, 0, 0); }
 				moveNew = XMVector3Normalize(moveNew);
 			}
 			moveNew += XMVectorSet(leftStick.x, 0, leftStick.y, 0);
@@ -2108,12 +2305,12 @@ void EditorComponent::Update(float dt)
 			editorscene.camera_transform.UpdateTransform_Parented(editorscene.camera_target);
 		}
 
-		if (!translator.selected.empty() && CheckInput(EditorActions::FOCUS_ON_SELECTION))
+		if (!translator.selected.empty() && main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::FOCUS_ON_SELECTION)]))
 		{
 			FocusCameraOnSelected();
 		}
 
-		inspector_mode = CheckInput(EditorActions::INSPECTOR_MODE);
+		inspector_mode = main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::INSPECTOR_MODE)]);
 
 		// Begin picking:
 		pickRay = wi::renderer::GetPickRay((long)currentMouse.x, (long)currentMouse.y, *renderPath, camera);
@@ -2466,7 +2663,7 @@ void EditorComponent::Update(float dt)
 		}
 
 		if (hovered.entity != INVALID_ENTITY &&
-			CheckInput(EditorActions::DEPTH_OF_FIELD_REFOCUS_TO_POINT) &&
+			main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::DEPTH_OF_FIELD_REFOCUS_TO_POINT)]) &&
 			wi::input::Down(wi::input::MOUSE_BUTTON_LEFT))
 		{
 			camera.focal_length = hovered.distance;
@@ -2478,7 +2675,7 @@ void EditorComponent::Update(float dt)
 		// Interactions:
 		{
 			// Interact:
-			if (CheckInput(EditorActions::RAGDOLL_AND_PHYSICS_IMPULSE_TESTER))
+			if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::RAGDOLL_AND_PHYSICS_IMPULSE_TESTER)]))
 			{
 				if (wi::input::Press(wi::input::MOUSE_BUTTON_MIDDLE))
 				{
@@ -2676,7 +2873,7 @@ void EditorComponent::Update(float dt)
 		bool isShiftDown = wi::input::Down(wi::input::KEYBOARD_BUTTON_LSHIFT) || wi::input::Down(wi::input::KEYBOARD_BUTTON_RSHIFT);
 
 		// Color Grading helper
-		if (CheckInput(EditorActions::COLOR_GRADING_REFERENCE))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::COLOR_GRADING_REFERENCE)]))
 		{
 			main->infoDisplay.colorgrading_helper = true;
 		}
@@ -2686,23 +2883,23 @@ void EditorComponent::Update(float dt)
 		}
 
 		// Toggle wireframe mode
-		if (CheckInput(EditorActions::WIREFRAME_MODE))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::WIREFRAME_MODE)]))
 		{
 			wi::renderer::SetWireRender(!wi::renderer::IsWireRender());
 			generalWnd.wireFrameCheckBox.SetCheck(wi::renderer::IsWireRender());
 		}
 
 		// Enable transform tool
-		if (CheckInput(EditorActions::ENABLE_TRANSFORM_TOOL))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::ENABLE_TRANSFORM_TOOL)]))
 		{
 			translator.SetEnabled(!translator.IsEnabled());
 		}
 
-		if (CheckInput(EditorActions::SAVE_SCENE_AS))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::SAVE_SCENE_AS)]))
 		{
 			SaveAs();
 		}
-		else if (CheckInput(EditorActions::SAVE_SCENE))
+		else if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::SAVE_SCENE)]))
 		{
 			if (!GetCurrentEditorScene().path.empty())
 			{
@@ -2715,13 +2912,13 @@ void EditorComponent::Update(float dt)
 		}
 
 		// Select All
-		if (CheckInput(EditorActions::SELECT_ALL_ENTITIES))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::SELECT_ALL_ENTITIES)]))
 		{
 			selectAll = true;
 		}
 
 		// Copy
-		if (CheckInput(EditorActions::COPY_ACTION))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::COPY_ACTION)]))
 		{
 			auto& prevSel = translator.selectedEntitiesNonRecursive;
 
@@ -2735,7 +2932,7 @@ void EditorComponent::Update(float dt)
 		}
 
 		// Cut
-		if (CheckInput(EditorActions::CUT_ACTION))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::CUT_ACTION)]))
 		{
 			auto& prevSel = translator.selectedEntitiesNonRecursive;
 
@@ -2751,7 +2948,7 @@ void EditorComponent::Update(float dt)
 		}
 
 		// Paste
-		if (CheckInput(EditorActions::PASTE_ACTION))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::PASTE_ACTION)]))
 		{
 			wi::Archive& archive = AdvanceHistory();
 			archive << HISTORYOP_ADD;
@@ -2779,7 +2976,7 @@ void EditorComponent::Update(float dt)
 		}
 
 		// Duplicate Entity
-		if (CheckInput(EditorActions::DUPLICATE_ENTITY))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::DUPLICATE_ENTITY)]))
 		{
 			wi::Archive& archive = AdvanceHistory();
 			archive << HISTORYOP_ADD;
@@ -2808,7 +3005,7 @@ void EditorComponent::Update(float dt)
 		}
 
 		// Duplicate/Put Instances
-		if (CheckInput(EditorActions::PLACE_INSTANCES))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::PLACE_INSTANCES)]))
 		{
 			wi::vector<Entity> addedEntities;
 			EntitySerializer seri;
@@ -2855,7 +3052,7 @@ void EditorComponent::Update(float dt)
 		}
 
 		// Undo
-		if (CheckInput(EditorActions::UNDO_ACTION))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::UNDO_ACTION)]))
 		{
 			ConsumeHistoryOperation(true);
 
@@ -2863,7 +3060,7 @@ void EditorComponent::Update(float dt)
 		}
 
 		// Redo
-		if (CheckInput(EditorActions::REDO_ACTION))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::REDO_ACTION)]))
 		{
 			ConsumeHistoryOperation(false);
 
@@ -2874,19 +3071,19 @@ void EditorComponent::Update(float dt)
 	// These keys work but for some reason in my keyboard 1 returns TAB and 2 returns TILDE keys.
 	if (!wi::backlog::isActive() && !GetGUI().IsTyping())
 	{
-		if (CheckInput(EditorActions::MOVE_TOGGLE_ACTION))
+		if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::MOVE_TOGGLE_ACTION)]))
 		{
 			translator.isTranslator = !translator.isTranslator;
 			translator.isScalator = false;
 			translator.isRotator = false;
 		}
-		else if (CheckInput(EditorActions::ROTATE_TOGGLE_ACTION))
+		else if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::ROTATE_TOGGLE_ACTION)]))
 		{
 			translator.isRotator = !translator.isRotator;
 			translator.isScalator = false;
 			translator.isTranslator = false;
 		}
-		else if (CheckInput(EditorActions::SCALE_TOGGLE_ACTION))
+		else if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::SCALE_TOGGLE_ACTION)]))
 		{
 			translator.isScalator = !translator.isScalator;
 			translator.isTranslator = false;
