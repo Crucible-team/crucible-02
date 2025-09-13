@@ -1,12 +1,16 @@
 #include "stdafx.h"
 #include "MetadataWindow.h"
+#include "json.hpp"
+#include "wiHelper.h"
+
+using json = nlohmann::json;
 
 using namespace wi::ecs;
 using namespace wi::scene;
 
 void MetadataWindow::Create(EditorComponent* _editor)
 {
-	editor = _editor;
+    editor = _editor;
 	wi::gui::Window::Create(ICON_METADATA " Metadata", wi::gui::Window::WindowControls::COLLAPSE | wi::gui::Window::WindowControls::CLOSE | wi::gui::Window::WindowControls::FIT_ALL_WIDGETS_VERTICAL);
 	SetSize(XMFLOAT2(300, 240));
 
@@ -38,18 +42,232 @@ void MetadataWindow::Create(EditorComponent* _editor)
 		};
 	};
 
-	presetCombo.Create("Preset: ");
-	presetCombo.AddItem("Custom", (uint64_t)MetadataComponent::Preset::Custom);
-	presetCombo.AddItem("Waypoint", (uint64_t)MetadataComponent::Preset::Waypoint);
-	presetCombo.AddItem("Player", (uint64_t)MetadataComponent::Preset::Player);
-	presetCombo.AddItem("Enemy", (uint64_t)MetadataComponent::Preset::Enemy);
-	presetCombo.AddItem("Npc", (uint64_t)MetadataComponent::Preset::NPC);
-	presetCombo.AddItem("Pickup", (uint64_t)MetadataComponent::Preset::Pickup);
-	presetCombo.AddItem("Vehicle", (uint64_t)MetadataComponent::Preset::Vehicle);
-	presetCombo.OnSelect(forEachSelected([] (auto metadata, auto args) {
-		metadata->preset = (MetadataComponent::Preset)args.userdata;
-	}));
-	AddWidget(&presetCombo);
+    presetCombo.Create("Preset: ");
+    presetCombo.AddItem("Custom", (uint64_t)MetadataComponent::Preset::Custom);
+    presetCombo.AddItem("Waypoint", (uint64_t)MetadataComponent::Preset::Waypoint);
+    presetCombo.AddItem("Player", (uint64_t)MetadataComponent::Preset::Player);
+    presetCombo.AddItem("Enemy", (uint64_t)MetadataComponent::Preset::Enemy);
+    presetCombo.AddItem("Npc", (uint64_t)MetadataComponent::Preset::NPC);
+    presetCombo.AddItem("Pickup", (uint64_t)MetadataComponent::Preset::Pickup);
+    presetCombo.AddItem("Vehicle", (uint64_t)MetadataComponent::Preset::Vehicle);
+
+    // Load dynamic entity class presets from entities/ folder(s) or presets.json
+    dynamicEntityClasses.clear();
+    dynamicEntityDefaults.clear();
+    {
+        wi::vector<std::string> candidate_dirs;
+        candidate_dirs.push_back(wi::helper::GetCurrentPath() + "/entities/");
+        candidate_dirs.push_back(wi::helper::GetCurrentPath() + "/Content/entities/");
+
+        wi::unordered_set<std::string> unique_names;
+
+        auto register_preset = [&](const std::string& name, const DynamicPresetDefaults* defaults) {
+            if (name.empty()) return;
+            bool newly_added = false;
+            if (unique_names.count(name) == 0) {
+                unique_names.insert(name);
+                dynamicEntityClasses.push_back(name);
+                newly_added = true;
+            }
+            if (defaults != nullptr)
+            {
+                // store defaults (update if missing or newly added)
+                if (newly_added || dynamicEntityDefaults.find(name) == dynamicEntityDefaults.end())
+                {
+                    dynamicEntityDefaults[name] = *defaults;
+                }
+            }
+        };
+
+        auto parse_defaults = [&](const json& container, DynamicPresetDefaults& out_defaults) {
+            const json* md = nullptr;
+            if (container.is_object())
+            {
+                if (container.contains("metadata") && container["metadata"].is_object())
+                {
+                    md = &container["metadata"];
+                }
+                else
+                {
+                    // also allow direct typed groups at top level
+                    md = &container;
+                }
+                if (md->contains("bool") && (*md)["bool"].is_object())
+                {
+                    for (auto it = (*md)["bool"].begin(); it != (*md)["bool"].end(); ++it)
+                    {
+                        if (it.value().is_boolean())
+                            out_defaults.bools[it.key()] = it.value().get<bool>();
+                    }
+                }
+                if (md->contains("int") && (*md)["int"].is_object())
+                {
+                    for (auto it = (*md)["int"].begin(); it != (*md)["int"].end(); ++it)
+                    {
+                        if (it.value().is_number_integer())
+                            out_defaults.ints[it.key()] = it.value().get<int>();
+                    }
+                }
+                if (md->contains("float") && (*md)["float"].is_object())
+                {
+                    for (auto it = (*md)["float"].begin(); it != (*md)["float"].end(); ++it)
+                    {
+                        if (it.value().is_number())
+                            out_defaults.floats[it.key()] = it.value().get<float>();
+                    }
+                }
+                if (md->contains("string") && (*md)["string"].is_object())
+                {
+                    for (auto it = (*md)["string"].begin(); it != (*md)["string"].end(); ++it)
+                    {
+                        if (it.value().is_string())
+                            out_defaults.strings[it.key()] = it.value().get<std::string>();
+                    }
+                }
+            }
+        };
+
+        for (const auto& dir : candidate_dirs)
+        {
+            if (!wi::helper::DirectoryExists(dir))
+                continue;
+
+            const std::string presets_file = dir + "presets.json";
+            if (wi::helper::FileExists(presets_file))
+            {
+                wi::vector<uint8_t> data;
+                if (wi::helper::FileRead(presets_file, data))
+                {
+                    try
+                    {
+                        json j = json::parse(data.begin(), data.end());
+                        auto process_entry = [&](const json& e) {
+                            std::string nm;
+                            DynamicPresetDefaults defs;
+                            if (e.is_string())
+                            {
+                                nm = e.get<std::string>();
+                            }
+                            else if (e.is_object())
+                            {
+                                if (e.contains("name") && e["name"].is_string())
+                                    nm = e["name"].get<std::string>();
+                                else if (e.contains("id") && e["id"].is_string())
+                                    nm = e["id"].get<std::string>();
+                                else if (e.contains("class") && e["class"].is_string())
+                                    nm = e["class"].get<std::string>();
+                                parse_defaults(e, defs);
+                            }
+                            if (!nm.empty())
+                            {
+                                register_preset(nm, &defs);
+                            }
+                        };
+
+                        if (j.is_object())
+                        {
+                            for (const char* key : { "presets", "entity_presets", "entity_classes" })
+                            {
+                                if (j.contains(key) && j[key].is_array())
+                                {
+                                    for (auto& e : j[key])
+                                        process_entry(e);
+                                }
+                            }
+                        }
+                        else if (j.is_array())
+                        {
+                            for (auto& e : j)
+                                process_entry(e);
+                        }
+                    }
+                    catch (...) {
+                        // ignore JSON errors silently for editor UX
+                    }
+                }
+            }
+
+            // Fallback: enumerate individual .json files as entity classes
+            wi::helper::GetFileNamesInDirectory(dir, [&](std::string path) {
+                // normalize lower-case compare for presets.json
+                std::string filename = wi::helper::GetFileNameFromPath(path);
+                if (wi::helper::toLower(filename) == "presets.json")
+                    return;
+                if (wi::helper::toLower(wi::helper::GetExtensionFromFileName(filename)) != "json")
+                    return;
+
+                // Try to parse a display name and defaults from file, fallback to filename without extension
+                std::string display = wi::helper::RemoveExtension(filename);
+                DynamicPresetDefaults defs;
+                wi::vector<uint8_t> data;
+                if (wi::helper::FileRead(path, data))
+                {
+                    try
+                    {
+                        json jj = json::parse(data.begin(), data.end());
+                        if (jj.is_object())
+                        {
+                            if (jj.contains("name") && jj["name"].is_string())
+                            {
+                                display = jj["name"].get<std::string>();
+                            }
+                            else if (jj.contains("class") && jj["class"].is_string())
+                            {
+                                display = jj["class"].get<std::string>();
+                            }
+                            parse_defaults(jj, defs);
+                        }
+                    }
+                    catch (...) {
+                        // ignore file-specific JSON errors
+                    }
+                }
+                register_preset(display, &defs);
+            }, "json");
+        }
+
+        for (size_t i = 0; i < dynamicEntityClasses.size(); ++i)
+        {
+            presetCombo.AddItem(dynamicEntityClasses[i], USER_PRESET_BASE + (uint64_t)i);
+        }
+    }
+
+    presetCombo.OnSelect([=](wi::gui::EventArgs args){
+        forEachSelected([this](auto metadata, auto args_inner){
+            if (args_inner.userdata >= USER_PRESET_BASE)
+            {
+                // Dynamic entity class: store class name and keep preset as Custom
+                size_t idx = size_t(args_inner.userdata - USER_PRESET_BASE);
+                if (idx < dynamicEntityClasses.size())
+                {
+                    metadata->preset = MetadataComponent::Preset::Custom;
+                    const std::string& cls = dynamicEntityClasses[idx];
+                    metadata->string_values.set("entity_class", cls);
+
+                    // Apply defaults from preset (override keys defined by preset, keep others)
+                    auto it = dynamicEntityDefaults.find(cls);
+                    if (it != dynamicEntityDefaults.end())
+                    {
+                        for (const auto& kv : it->second.bools)  metadata->bool_values.set(kv.first, kv.second);
+                        for (const auto& kv : it->second.ints)   metadata->int_values.set(kv.first, kv.second);
+                        for (const auto& kv : it->second.floats) metadata->float_values.set(kv.first, kv.second);
+                        for (const auto& kv : it->second.strings)metadata->string_values.set(kv.first, kv.second);
+                    }
+                }
+            }
+            else
+            {
+                // Built-in preset: set preset and clear any previous entity_class label
+                metadata->preset = (MetadataComponent::Preset)args_inner.userdata;
+                if (metadata->string_values.has("entity_class"))
+                {
+                    metadata->string_values.erase("entity_class");
+                }
+            }
+        })(args);
+        RefreshEntries();
+    });
+    AddWidget(&presetCombo);
 
 	addCombo.Create("");
 	addCombo.SetInvalidSelectionText("+");
@@ -109,7 +327,24 @@ void MetadataWindow::SetEntity(Entity entity)
 
 	if (metadata != nullptr)
 	{
-		presetCombo.SetSelectedByUserdataWithoutCallback((uint64_t)metadata->preset);
+		bool selected_dynamic = false;
+		if (metadata->string_values.has("entity_class"))
+		{
+			std::string cls = metadata->string_values.get("entity_class");
+			for (size_t i = 0; i < dynamicEntityClasses.size(); ++i)
+			{
+				if (dynamicEntityClasses[i] == cls)
+				{
+					presetCombo.SetSelectedByUserdataWithoutCallback(USER_PRESET_BASE + (uint64_t)i);
+					selected_dynamic = true;
+					break;
+				}
+			}
+		}
+		if (!selected_dynamic)
+		{
+			presetCombo.SetSelectedByUserdataWithoutCallback((uint64_t)metadata->preset);
+		}
 
 		if (changed)
 		{

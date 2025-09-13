@@ -18,6 +18,23 @@ using namespace wi::primitive;
 
 namespace wi::gui
 {
+	struct WireVertex { XMFLOAT4 pos; XMFLOAT4 col; };
+	struct WireDrawRange { uint32_t start; uint32_t count; };
+	struct WireBatchState
+	{
+		wi::vector<WireVertex> verts;
+		wi::vector<WireDrawRange> ranges;
+		wi::graphics::CommandList cmd = {};
+		XMFLOAT4X4 projection = {};
+		bool active = false;
+		void Reset()
+		{
+			verts.clear();
+			ranges.clear();
+			active = false;
+		}
+	};
+	static WireBatchState g_wire_batch;
 	struct InternalState
 	{
 		wi::graphics::PipelineState PSO_colored;
@@ -49,6 +66,305 @@ namespace wi::gui
 	{
 		static InternalState internal_state;
 		return internal_state;
+	}
+
+	void DrawWireBezierStrip(
+		const XMFLOAT2& from,
+		const XMFLOAT2& to,
+		float thickness,
+		const XMFLOAT4& color,
+		const wi::Canvas& canvas,
+		wi::graphics::CommandList cmd)
+	{
+		using wi::graphics::GraphicsDevice;
+		GraphicsDevice* device = wi::graphics::GetDevice();
+
+		// Bind the simple colored pipeline used by other GUI custom draws
+		device->BindPipelineState(&gui_internal().PSO_colored, cmd);
+
+		// Build bezier strip vertices
+		struct Vertex { XMFLOAT4 pos; XMFLOAT4 col; };
+		constexpr int segments = 24;
+		wi::vector<Vertex> verts;
+		verts.reserve((segments + 1) * 2);
+
+		auto bezier = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
+			const float it = 1.0f - t;
+			const float a = it * it * it;
+			const float b = 3.0f * it * it * t;
+			const float c = 3.0f * it * t * t;
+			const float d = t * t * t;
+			return XMFLOAT2(
+				a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+				a * p0.y + b * p1.y + c * p2.y + d * p3.y
+			);
+		};
+		auto bezier_deriv = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
+			const float it = 1.0f - t;
+			// 3*(1-t)^2*(p1-p0) + 6*(1-t)*t*(p2-p1) + 3*t^2*(p3-p2)
+			XMFLOAT2 r;
+			r.x = 3.0f * it * it * (p1.x - p0.x) + 6.0f * it * t * (p2.x - p1.x) + 3.0f * t * t * (p3.x - p2.x);
+			r.y = 3.0f * it * it * (p1.y - p0.y) + 6.0f * it * t * (p2.y - p1.y) + 3.0f * t * t * (p3.y - p2.y);
+			return r;
+		};
+
+		XMFLOAT2 p0 = from;
+		XMFLOAT2 p3 = to;
+		// Compute control point offset with direction and clamped magnitude to avoid loops
+		float dx_abs = std::abs(p3.x - p0.x);
+		float dist = std::sqrt((p3.x - p0.x) * (p3.x - p0.x) + (p3.y - p0.y) * (p3.y - p0.y));
+		float dx = std::max(dx_abs * 0.35f, 20.0f);
+		dx = std::min(dx, dist * 0.5f);
+		float dir = (p3.x >= p0.x) ? 1.0f : -1.0f;
+		XMFLOAT2 p1 = XMFLOAT2(p0.x + dir * dx, p0.y);
+		XMFLOAT2 p2 = XMFLOAT2(p3.x - dir * dx, p3.y);
+
+		float half = std::max(1.0f, thickness * 0.5f);
+		XMFLOAT2 prevN = XMFLOAT2(0, -1);
+		for (int i = 0; i <= segments; ++i)
+		{
+			float t = (float)i / (float)segments;
+			XMFLOAT2 pt = bezier(p0, p1, p2, p3, t);
+			XMFLOAT2 tg = bezier_deriv(p0, p1, p2, p3, t);
+			float len = std::sqrt(tg.x * tg.x + tg.y * tg.y);
+			XMFLOAT2 N = prevN;
+			if (len > 0.0001f)
+			{
+				N = XMFLOAT2(-tg.y / len, tg.x / len);
+				prevN = N;
+			}
+
+			XMFLOAT4 col = color;
+			// Optional: soften ends
+			if (i == 0 || i == segments)
+			{
+				col.w *= 0.9f;
+			}
+
+			// left and right verts
+			verts.push_back({ XMFLOAT4(pt.x - N.x * half, pt.y - N.y * half, 0, 1), col });
+			verts.push_back({ XMFLOAT4(pt.x + N.x * half, pt.y + N.y * half, 0, 1), col });
+		}
+
+		// Upload and draw as a triangle strip
+		const XMMATRIX Projection = canvas.GetProjection();
+		MiscCB cb;
+		XMStoreFloat4x4(&cb.g_xTransform, XMMatrixIdentity() * Projection);
+		cb.g_xColor = float4(1, 1, 1, 1);
+		device->BindDynamicConstantBuffer(cb, CBSLOT_RENDERER_MISC, cmd);
+
+		size_t alloc_size = sizeof(Vertex) * verts.size();
+		auto alloc = device->AllocateGPU(alloc_size, cmd);
+		std::memcpy(alloc.data, verts.data(), alloc_size);
+
+		const wi::graphics::GPUBuffer* vbs[] = { &alloc.buffer };
+		const uint32_t strides[] = { sizeof(Vertex) };
+		const uint64_t offsets[] = { alloc.offset };
+		device->BindVertexBuffers(vbs, 0, 1, strides, offsets, cmd);
+		device->Draw((uint32_t)verts.size(), 0, cmd);
+	}
+
+	void DrawWireBezierStripTangent(
+		const XMFLOAT2& from,
+		const XMFLOAT2& to,
+		const XMFLOAT2& tanFrom,
+		const XMFLOAT2& tanTo,
+		float thickness,
+		const XMFLOAT4& color,
+		const wi::Canvas& canvas,
+		wi::graphics::CommandList cmd)
+	{
+		using wi::graphics::GraphicsDevice;
+		GraphicsDevice* device = wi::graphics::GetDevice();
+
+		device->BindPipelineState(&gui_internal().PSO_colored, cmd);
+
+		struct Vertex { XMFLOAT4 pos; XMFLOAT4 col; };
+		constexpr int segments = 24;
+		wi::vector<Vertex> verts;
+		verts.reserve((segments + 1) * 2);
+
+		auto bezier = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
+			const float it = 1.0f - t;
+			const float a = it * it * it;
+			const float b = 3.0f * it * it * t;
+			const float c = 3.0f * it * t * t;
+			const float d = t * t * t;
+			return XMFLOAT2(
+				a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+				a * p0.y + b * p1.y + c * p2.y + d * p3.y
+			);
+		};
+
+		// Hermite (P0, P1, T0, T1) to Bezier control points:
+		XMFLOAT2 p0 = from;
+		XMFLOAT2 p3 = to;
+		XMFLOAT2 p1 = XMFLOAT2(from.x + tanFrom.x * (1.0f / 3.0f), from.y + tanFrom.y * (1.0f / 3.0f));
+		XMFLOAT2 p2 = XMFLOAT2(to.x - tanTo.x * (1.0f / 3.0f),   to.y - tanTo.y * (1.0f / 3.0f));
+
+		float half = std::max(1.0f, thickness * 0.5f);
+		XMFLOAT2 prevN = XMFLOAT2(0, -1);
+		for (int i = 0; i <= segments; ++i)
+		{
+			float t = (float)i / (float)segments;
+			XMFLOAT2 pt = bezier(p0, p1, p2, p3, t);
+			// approximate tangent by finite difference along parameter:
+			float dt = 1.0f / (float)segments;
+			float tnext = std::min(1.0f, t + dt);
+			XMFLOAT2 ptnext = bezier(p0, p1, p2, p3, tnext);
+			XMFLOAT2 tg = XMFLOAT2(ptnext.x - pt.x, ptnext.y - pt.y);
+			float len = std::sqrt(tg.x * tg.x + tg.y * tg.y);
+			XMFLOAT2 N = prevN;
+			if (len > 0.0001f)
+			{
+				N = XMFLOAT2(-tg.y / len, tg.x / len);
+				prevN = N;
+			}
+
+			XMFLOAT4 col = color;
+			if (i == 0 || i == segments)
+			{
+				col.w *= 0.9f;
+			}
+
+			verts.push_back({ XMFLOAT4(pt.x - N.x * half, pt.y - N.y * half, 0, 1), col });
+			verts.push_back({ XMFLOAT4(pt.x + N.x * half, pt.y + N.y * half, 0, 1), col });
+		}
+
+		const XMMATRIX Projection = canvas.GetProjection();
+		MiscCB cb;
+		XMStoreFloat4x4(&cb.g_xTransform, XMMatrixIdentity() * Projection);
+		cb.g_xColor = float4(1, 1, 1, 1);
+		device->BindDynamicConstantBuffer(cb, CBSLOT_RENDERER_MISC, cmd);
+
+		size_t alloc_size = sizeof(Vertex) * verts.size();
+		auto alloc = device->AllocateGPU(alloc_size, cmd);
+		std::memcpy(alloc.data, verts.data(), alloc_size);
+
+		const wi::graphics::GPUBuffer* vbs[] = { &alloc.buffer };
+		const uint32_t strides[] = { sizeof(Vertex) };
+		const uint64_t offsets[] = { alloc.offset };
+		device->BindVertexBuffers(vbs, 0, 1, strides, offsets, cmd);
+		device->Draw((uint32_t)verts.size(), 0, cmd);
+	}
+
+	// ---------------- Wire batching ----------------
+	void BeginWireBatch(const wi::Canvas& canvas, wi::graphics::CommandList cmd)
+	{
+		// Implicitly flush if an active batch exists to preserve order
+		if (g_wire_batch.active && !g_wire_batch.verts.empty())
+		{
+			FlushWireBatch();
+		}
+		g_wire_batch.Reset();
+		g_wire_batch.active = true;
+		g_wire_batch.cmd = cmd;
+		XMStoreFloat4x4(&g_wire_batch.projection, canvas.GetProjection());
+		// Reserve some space to minimize reallocations for typical node graphs
+		g_wire_batch.verts.reserve(4096);
+		g_wire_batch.ranges.reserve(256);
+	}
+
+	void AddWireBezierStripTangent(
+		const XMFLOAT2& from,
+		const XMFLOAT2& to,
+		const XMFLOAT2& tanFrom,
+		const XMFLOAT2& tanTo,
+		float thickness,
+		const XMFLOAT4& color)
+	{
+		if (!g_wire_batch.active)
+		{
+			// Fallback: immediate draw on current command list is not possible without canvas.
+			// Users must call BeginWireBatch() first. Silently ignore to avoid breaking callers.
+			return;
+		}
+
+		constexpr int segments = 24;
+		auto bezier = [](const XMFLOAT2& p0, const XMFLOAT2& p1, const XMFLOAT2& p2, const XMFLOAT2& p3, float t) -> XMFLOAT2 {
+			const float it = 1.0f - t;
+			const float a = it * it * it;
+			const float b = 3.0f * it * it * t;
+			const float c = 3.0f * it * t * t;
+			const float d = t * t * t;
+			return XMFLOAT2(
+				a * p0.x + b * p1.x + c * p2.x + d * p3.x,
+				a * p0.y + b * p1.y + c * p2.y + d * p3.y
+			);
+		};
+
+		// Hermite to Bezier conversion
+		XMFLOAT2 p0 = from;
+		XMFLOAT2 p3 = to;
+		XMFLOAT2 p1 = XMFLOAT2(from.x + tanFrom.x * (1.0f / 3.0f), from.y + tanFrom.y * (1.0f / 3.0f));
+		XMFLOAT2 p2 = XMFLOAT2(to.x - tanTo.x * (1.0f / 3.0f),   to.y - tanTo.y * (1.0f / 3.0f));
+
+		float half = std::max(1.0f, thickness * 0.5f);
+		XMFLOAT2 prevN = XMFLOAT2(0, -1);
+		uint32_t start = (uint32_t)g_wire_batch.verts.size();
+		g_wire_batch.verts.reserve(g_wire_batch.verts.size() + (segments + 1) * 2);
+		for (int i = 0; i <= segments; ++i)
+		{
+			float t = (float)i / (float)segments;
+			XMFLOAT2 pt = bezier(p0, p1, p2, p3, t);
+			float tnext = std::min(1.0f, t + 1.0f / (float)segments);
+			XMFLOAT2 ptnext = bezier(p0, p1, p2, p3, tnext);
+			XMFLOAT2 tg = XMFLOAT2(ptnext.x - pt.x, ptnext.y - pt.y);
+			float len = std::sqrt(tg.x * tg.x + tg.y * tg.y);
+			XMFLOAT2 N = prevN;
+			if (len > 0.0001f)
+			{
+				N = XMFLOAT2(-tg.y / len, tg.x / len);
+				prevN = N;
+			}
+
+			XMFLOAT4 col = color;
+			if (i == 0 || i == segments)
+			{
+				col.w *= 0.9f;
+			}
+
+			g_wire_batch.verts.push_back({ XMFLOAT4(pt.x - N.x * half, pt.y - N.y * half, 0, 1), col });
+			g_wire_batch.verts.push_back({ XMFLOAT4(pt.x + N.x * half, pt.y + N.y * half, 0, 1), col });
+		}
+		uint32_t count = (uint32_t)g_wire_batch.verts.size() - start;
+		g_wire_batch.ranges.push_back({ start, count });
+	}
+
+	void FlushWireBatch()
+	{
+		if (!g_wire_batch.active || g_wire_batch.verts.empty())
+		{
+			g_wire_batch.Reset();
+			return;
+		}
+		using wi::graphics::GraphicsDevice;
+		GraphicsDevice* device = wi::graphics::GetDevice();
+
+		// Bind pipeline and transform
+		device->BindPipelineState(&gui_internal().PSO_colored, g_wire_batch.cmd);
+		MiscCB cb;
+		XMMATRIX Projection = XMLoadFloat4x4(&g_wire_batch.projection);
+		XMStoreFloat4x4(&cb.g_xTransform, XMMatrixIdentity() * Projection);
+		cb.g_xColor = float4(1, 1, 1, 1);
+		device->BindDynamicConstantBuffer(cb, CBSLOT_RENDERER_MISC, g_wire_batch.cmd);
+
+		// Single allocation for all batched vertices
+		size_t alloc_size = sizeof(WireVertex) * g_wire_batch.verts.size();
+		auto alloc = device->AllocateGPU(alloc_size, g_wire_batch.cmd);
+		std::memcpy(alloc.data, g_wire_batch.verts.data(), alloc_size);
+
+		const wi::graphics::GPUBuffer* vbs[] = { &alloc.buffer };
+		const uint32_t strides[] = { sizeof(WireVertex) };
+		const uint64_t offsets[] = { alloc.offset };
+		device->BindVertexBuffers(vbs, 0, 1, strides, offsets, g_wire_batch.cmd);
+
+		for (const auto& r : g_wire_batch.ranges)
+		{
+			device->Draw(r.count, r.start, g_wire_batch.cmd);
+		}
+
+		g_wire_batch.Reset();
 	}
 
 	// This is used so that elements that support scroll could disable other scrolling elements:
@@ -4309,6 +4625,16 @@ namespace wi::gui
 		{
 			widget->SetTheme(theme, id);
 		}
+	}
+	void Window::SetTitle(const std::string& value)
+	{
+		Widget::SetText(value);
+		if (has_titlebar)
+		{
+			label.SetText(value);
+			moveDragger.SetText(value);
+		}
+		
 	}
 	void Window::ResizeLayout()
 	{

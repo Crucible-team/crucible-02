@@ -6,12 +6,15 @@
 #include "ContentBrowserWindow.h"
 #include "ProjectCreatorWindow.h"
 #include "ThemeEditorWindow.h"
+#include "NodeEditorWindow.h"
 #include "GraphicsWindow.h"
 #include "CameraWindow.h"
 #include "MaterialPickerWindow.h"
 #include "PaintToolWindow.h"
 #include "GeneralWindow.h"
 #include "IconDefinitions.h"
+#include "json.hpp"
+
 
 class Editor;
 class EditorComponent : public wi::RenderPath2D
@@ -53,9 +56,10 @@ public:
 	wi::gui::Button saveButton;
 	wi::gui::Button openButton;
 	wi::gui::Button contentBrowserButton;
-	wi::gui::Button logButton;
-	wi::gui::Button profilerButton;
-	wi::gui::Button cinemaButton;
+    wi::gui::Button logButton;
+    wi::gui::Button profilerButton;
+    wi::gui::Button nodeEditorButton;
+    wi::gui::Button cinemaButton;
 	wi::gui::Button fullscreenButton;
 	wi::gui::Button bugButton;
 	wi::gui::Button aboutButton;
@@ -66,9 +70,10 @@ public:
 	ComponentsWindow componentsWnd;
 	ProfilerWindow profilerWnd;
 	ContentBrowserWindow contentBrowserWnd;
-	ProjectCreatorWindow projectCreatorWnd;
-	ThemeEditorWindow themeEditorWnd;
-	wi::gui::Window topmenuWnd;
+    ProjectCreatorWindow projectCreatorWnd;
+    ThemeEditorWindow themeEditorWnd;
+    NodeEditorWindow nodeEditorWnd;
+    wi::gui::Window topmenuWnd;
 
 	wi::gui::Button generalButton;
 	wi::gui::Button graphicsButton;
@@ -211,6 +216,8 @@ public:
 		int historyPos = -1;
 		wi::gui::Button tabSelectButton;
 		wi::gui::Button tabCloseButton;
+		// In-memory Node Editor graph cache for this scene (JSON string)
+		std::string nodeEditorGraphCache;
 	};
 	wi::vector<std::unique_ptr<EditorScene>> scenes;
 	int current_scene = 0;
@@ -241,6 +248,31 @@ public:
 	wi::SpriteFont loadmodel_font;
 
 	wi::TrailRenderer spline_renderer;
+
+
+
+	// Dynamic entity class presets loaded from JSON/files
+	wi::vector<std::string> dynamicEntityClasses;
+	static constexpr uint64_t USER_PRESET_BASE = 1000; // userdata offset for dynamic items
+
+	struct DynamicPresetDefaults
+	{
+		wi::unordered_map<std::string, bool> bools;
+		wi::unordered_map<std::string, int> ints;
+		wi::unordered_map<std::string, float> floats;
+		wi::unordered_map<std::string, std::string> strings;
+
+		std::vector<std::string> component_list;
+		nlohmann::json component_init;
+
+		// editor-only port lists:
+		std::vector<std::string> node_inputs;
+		std::vector<std::string> node_outputs;
+	};
+	wi::unordered_map<std::string, DynamicPresetDefaults> dynamicEntityDefaults; // key: class name
+
+	
+
 };
 
 class Editor : public wi::Application

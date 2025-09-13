@@ -20,11 +20,16 @@ Wicked Engine is an open-source 3D engine with modern graphics. Use this as a C+
 - [Editor Manual](Content/Documentation/WickedEditor-Manual.pdf)<br/>
 - [C++ Documentation](Content/Documentation/WickedEngine-Documentation.md)<br/>
 - [Lua Documentation](Content/Documentation/ScriptingAPI-Documentation.md)<br/>
+- [Changelog](CHANGELOG.md)<br/>
 - [Videos](https://www.youtube.com/playlist?list=PLLN-1FTGyLU_HJoC5zx6hJkB3D2XLiaxS)<br/>
 
 You can get the full source code by using Git version control and cloning https://github.com/turanszkij/WickedEngine.git, or downloading it as zip. You can also download nightly packaged builds of the Editor here (requires Github sign in): [![Github Build Status](https://github.com/turanszkij/WickedEngine/workflows/Build/badge.svg)](https://github.com/turanszkij/WickedEngine/actions)
 
 <br/>
+
+### What’s New (0.72.0)
+- Added `EntityOutputsComponent` for Source-style entity output bindings (Editor UI).
+- Updated `MetadataComponent` internals: ordered, per-type unique keys; same Lua API.
 
 <img align="left" src="https://github.com/turanszkij/wickedengine-gifs/raw/main/guy_pose.png" width="240px"/>
 

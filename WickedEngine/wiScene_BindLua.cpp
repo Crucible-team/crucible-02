@@ -525,6 +525,7 @@ void Bind()
 		Luna<DecalComponent_BindLua>::Register(L);
 		Luna<MetadataComponent_BindLua>::Register(L);
 		Luna<CharacterComponent_BindLua>::Register(L);
+		Luna<EntityOutputsComponent_BindLua>::Register(L);
 
 		wi::lua::RunText(value_bindings);
 	}
@@ -574,6 +575,7 @@ Luna<Scene_BindLua>::FunctionType Scene_BindLua::methods[] = {
 	lunamethod(Scene_BindLua, Component_CreateVoxelGrid),
 	lunamethod(Scene_BindLua, Component_CreateMetadata),
 	lunamethod(Scene_BindLua, Component_CreateCharacter),
+	lunamethod(Scene_BindLua, Component_CreateOutputs),
 
 	lunamethod(Scene_BindLua, Component_GetName),
 	lunamethod(Scene_BindLua, Component_GetLayer),
@@ -604,6 +606,7 @@ Luna<Scene_BindLua>::FunctionType Scene_BindLua::methods[] = {
 	lunamethod(Scene_BindLua, Component_GetVoxelGrid),
 	lunamethod(Scene_BindLua, Component_GetMetadata),
 	lunamethod(Scene_BindLua, Component_GetCharacter),
+	lunamethod(Scene_BindLua, Component_GetOutputs),
 
 	lunamethod(Scene_BindLua, Component_GetNameArray),
 	lunamethod(Scene_BindLua, Component_GetLayerArray),
@@ -634,6 +637,7 @@ Luna<Scene_BindLua>::FunctionType Scene_BindLua::methods[] = {
 	lunamethod(Scene_BindLua, Component_GetVoxelGridArray),
 	lunamethod(Scene_BindLua, Component_GetMetadataArray),
 	lunamethod(Scene_BindLua, Component_GetCharacterArray),
+	lunamethod(Scene_BindLua, Component_GetOutputsArray),
 
 	lunamethod(Scene_BindLua, Entity_GetNameArray),
 	lunamethod(Scene_BindLua, Entity_GetLayerArray),
@@ -664,6 +668,7 @@ Luna<Scene_BindLua>::FunctionType Scene_BindLua::methods[] = {
 	lunamethod(Scene_BindLua, Entity_GetVoxelGridArray),
 	lunamethod(Scene_BindLua, Entity_GetMetadataArray),
 	lunamethod(Scene_BindLua, Entity_GetCharacterArray),
+	lunamethod(Scene_BindLua, Entity_GetOutputsArray),
 
 	lunamethod(Scene_BindLua, Component_RemoveName),
 	lunamethod(Scene_BindLua, Component_RemoveLayer),
@@ -695,6 +700,7 @@ Luna<Scene_BindLua>::FunctionType Scene_BindLua::methods[] = {
 	lunamethod(Scene_BindLua, Component_RemoveVoxelGrid),
 	lunamethod(Scene_BindLua, Component_RemoveMetadata),
 	lunamethod(Scene_BindLua, Component_RemoveCharacter),
+	lunamethod(Scene_BindLua, Component_RemoveOutputs),
 
 	lunamethod(Scene_BindLua, Component_Attach),
 	lunamethod(Scene_BindLua, Component_Detach),
@@ -1570,6 +1576,25 @@ int Scene_BindLua::Component_CreateMetadata(lua_State* L)
 	}
 	return 0;
 }
+
+int Scene_BindLua::Component_CreateOutputs(lua_State* L)
+{
+	int argc = wi::lua::SGetArgCount(L);
+	if (argc > 0)
+	{
+		Entity entity = (Entity)wi::lua::SGetLongLong(L, 1);
+
+		EntityOutputsComponent& component = scene->entityoutputs.Create(entity);
+		Luna<EntityOutputsComponent_BindLua>::push(L, &component);
+		return 1;
+	}
+	else
+	{
+		wi::lua::SError(L, "Scene::Component_CreateOutputs(Entity entity) not enough arguments!");
+	}
+	return 0;
+}
+
 int Scene_BindLua::Component_CreateCharacter(lua_State* L)
 {
 	int argc = wi::lua::SGetArgCount(L);
@@ -2204,6 +2229,29 @@ int Scene_BindLua::Component_GetMetadata(lua_State* L)
 	}
 	return 0;
 }
+
+int Scene_BindLua::Component_GetOutputs(lua_State* L)
+{
+	int argc = wi::lua::SGetArgCount(L);
+	if (argc > 0)
+	{
+		Entity entity = (Entity)wi::lua::SGetLongLong(L, 1);
+
+		EntityOutputsComponent* component = scene->entityoutputs.GetComponent(entity);
+		if (component == nullptr)
+		{
+			return 0;
+		}
+
+		Luna<EntityOutputsComponent_BindLua>::push(L, component);
+		return 1;
+	}
+	else
+	{
+		wi::lua::SError(L, "Scene::Component_GetOutputs(Entity entity) not enough arguments!");
+	}
+	return 0;
+}
 int Scene_BindLua::Component_GetCharacter(lua_State* L)
 {
 	int argc = wi::lua::SGetArgCount(L);
@@ -2535,6 +2583,19 @@ int Scene_BindLua::Component_GetMetadataArray(lua_State* L)
 	}
 	return 1;
 }
+
+int Scene_BindLua::Component_GetOutputsArray(lua_State* L)
+{
+	lua_createtable(L, (int)scene->entityoutputs.GetCount(), 0);
+	int newTable = lua_gettop(L);
+	for (size_t i = 0; i < scene->entityoutputs.GetCount(); ++i)
+	{
+		Luna<EntityOutputsComponent_BindLua>::push(L, &scene->entityoutputs[i]);
+		lua_rawseti(L, newTable, lua_Integer(i + 1));
+	}
+	return 1;
+}
+
 int Scene_BindLua::Component_GetCharacterArray(lua_State* L)
 {
 	lua_createtable(L, (int)scene->characters.GetCount(), 0);
@@ -2866,6 +2927,19 @@ int Scene_BindLua::Entity_GetMetadataArray(lua_State* L)
 	}
 	return 1;
 }
+
+int Scene_BindLua::Entity_GetOutputsArray(lua_State* L)
+{
+	lua_createtable(L, (int)scene->entityoutputs.GetCount(), 0);
+	int newTable = lua_gettop(L);
+	for (size_t i = 0; i < scene->entityoutputs.GetCount(); ++i)
+	{
+		wi::lua::SSetLongLong(L, scene->entityoutputs.GetEntity(i));
+		lua_rawseti(L, newTable, lua_Integer(i + 1));
+	}
+	return 1;
+}
+
 int Scene_BindLua::Entity_GetCharacterArray(lua_State* L)
 {
 	lua_createtable(L, (int)scene->characters.GetCount(), 0);
@@ -3371,6 +3445,25 @@ int Scene_BindLua::Component_RemoveMetadata(lua_State* L)
 	}
 	return 0;
 }
+
+int Scene_BindLua::Component_RemoveOutputs(lua_State* L)
+{
+	int argc = wi::lua::SGetArgCount(L);
+	if (argc > 0)
+	{
+		Entity entity = (Entity)wi::lua::SGetLongLong(L, 1);
+		if (scene->entityoutputs.Contains(entity))
+		{
+			scene->entityoutputs.Remove(entity);
+		}
+	}
+	else
+	{
+		wi::lua::SError(L, "Scene::Component_RemoveOutputs(Entity entity) not enough arguments!");
+	}
+	return 0;
+}
+
 int Scene_BindLua::Component_RemoveCharacter(lua_State* L)
 {
 	int argc = wi::lua::SGetArgCount(L);
@@ -8202,9 +8295,49 @@ int MetadataComponent_BindLua::SetString(lua_State* L)
 
 
 
+Luna<EntityOutputsComponent_BindLua>::FunctionType EntityOutputsComponent_BindLua::methods[] = {
+	lunamethod(EntityOutputsComponent_BindLua, GetTable),
+	{ NULL, NULL }
+};
+Luna<EntityOutputsComponent_BindLua>::PropertyType EntityOutputsComponent_BindLua::properties[] = {
+	{ NULL, NULL }
+};
 
+int EntityOutputsComponent_BindLua::GetTable(lua_State* L)
+{
+	lua_createtable(L, 0, 2);            // root table
+	int root = lua_gettop(L);
 
+	for (const auto& r : component->outputs) {
 
+		lua_getfield(L, root, r.event.c_str());    // root[event]
+		if (!lua_istable(L, -1)) {
+			lua_pop(L, 1);                   // pop non-table/nil
+			lua_createtable(L, 0, 0);        // new array
+			lua_pushvalue(L, -1);            // dup array
+			lua_setfield(L, root, r.event.c_str());// root[event] = array
+		}
+
+		int arr = lua_gettop(L);
+
+		// arr[#arr+1] = row
+		lua_Integer nextIndex = (lua_Integer)lua_rawlen(L, arr) + 1;
+
+		lua_createtable(L, 0, 5);            // push new row table
+
+		lua_pushstring(L, r.target.c_str()); lua_setfield(L, -2, "target");
+		lua_pushstring(L, r.input.c_str());  lua_setfield(L, -2, "input");
+		lua_pushstring(L, r.parameter.c_str()); lua_setfield(L, -2, "parameter");
+		lua_pushnumber(L, r.delay);          lua_setfield(L, -2, "delay");
+		lua_pushboolean(L, r.refire);          lua_setfield(L, -2, "refire");
+
+		lua_rawseti(L, arr, nextIndex);   // arr[nextIndex] = row
+
+		lua_pop(L, 1); // pop arr
+	}
+
+	return 1;
+}
 
 Luna<CharacterComponent_BindLua>::FunctionType CharacterComponent_BindLua::methods[] = {
 	lunamethod(CharacterComponent_BindLua, Move),

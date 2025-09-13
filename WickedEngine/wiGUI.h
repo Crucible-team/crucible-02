@@ -906,6 +906,10 @@ namespace wi::gui
 		void SetTheme(const Theme& theme, int id = -1) override;
 		const char* GetWidgetTypeName() const override { return "Window"; }
 
+		// Propagate title text changes to titlebar widgets
+
+		void SetTitle(const std::string& value);
+
 		void SetVisible(bool value) override;
 		void SetEnabled(bool value) override;
 		void SetCollapsed(bool value);
@@ -1046,6 +1050,44 @@ namespace wi::gui
 
 		ScrollBar scrollbar;
 	};
+
+	// Utility: draw a thick cubic Bezier wire in GUI space using the colored GUI pipeline.
+	// The positions are in screen space (same as other widgets), and the wire will be
+	// transformed by the GUI projection internally. Caller should apply scissor if needed.
+	void DrawWireBezierStrip(
+		const XMFLOAT2& from,
+		const XMFLOAT2& to,
+		float thickness,
+		const XMFLOAT4& color,
+		const wi::Canvas& canvas,
+		wi::graphics::CommandList cmd);
+
+	// Variant: draw a Bezier wire using explicit endpoint tangents (Hermite -> Bezier conversion).
+	// Tangents are in screen space units. Magnitudes are used as control handle lengths.
+	void DrawWireBezierStripTangent(
+		const XMFLOAT2& from,
+		const XMFLOAT2& to,
+		const XMFLOAT2& tanFrom,
+		const XMFLOAT2& tanTo,
+		float thickness,
+		const XMFLOAT4& color,
+		const wi::Canvas& canvas,
+		wi::graphics::CommandList cmd);
+
+	// Batched variant for drawing many wire segments efficiently.
+	// Usage:
+	//   BeginWireBatch(canvas, cmd);
+	//   AddWireBezierStripTangent(...); // repeated
+	//   FlushWireBatch();
+	void BeginWireBatch(const wi::Canvas& canvas, wi::graphics::CommandList cmd);
+	void AddWireBezierStripTangent(
+		const XMFLOAT2& from,
+		const XMFLOAT2& to,
+		const XMFLOAT2& tanFrom,
+		const XMFLOAT2& tanTo,
+		float thickness,
+		const XMFLOAT4& color);
+	void FlushWireBatch();
 
 }
 

@@ -2448,7 +2448,7 @@ namespace wi::scene
 			}
 		}
 	}
-	void MetadataComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
+void MetadataComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 	{
 		if (archive.IsReadMode())
 		{
@@ -2536,6 +2536,41 @@ namespace wi::scene
 			{
 				archive << x.first;
 				archive << string_values.get(x.first);
+			}
+		}
+	}
+
+	void EntityOutputsComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
+	{
+		if (archive.IsReadMode())
+		{
+			size_t count = 0;
+			archive >> count;
+			outputs.clear();
+			outputs.reserve(count);
+			for (size_t i = 0; i < count; ++i)
+			{
+				OutputBinding b;
+				archive >> b.event;
+				archive >> b.target;
+				archive >> b.input;
+				archive >> b.parameter;
+				archive >> b.delay;
+				archive >> b.refire;
+				outputs.push_back(std::move(b));
+			}
+		}
+		else
+		{
+			archive << outputs.size();
+			for (const auto& b : outputs)
+			{
+				archive << b.event;
+				archive << b.target;
+				archive << b.input;
+				archive << b.parameter;
+				archive << b.delay;
+				archive << b.refire;
 			}
 		}
 	}

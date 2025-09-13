@@ -78,6 +78,7 @@ namespace wi::lua::scene
 		int Component_CreateVoxelGrid(lua_State* L);
 		int Component_CreateMetadata(lua_State* L);
 		int Component_CreateCharacter(lua_State* L);
+		int Component_CreateOutputs(lua_State* L);
 
 		int Component_GetName(lua_State* L);
 		int Component_GetLayer(lua_State* L);
@@ -108,6 +109,7 @@ namespace wi::lua::scene
 		int Component_GetVoxelGrid(lua_State* L);
 		int Component_GetMetadata(lua_State* L);
 		int Component_GetCharacter(lua_State* L);
+		int Component_GetOutputs(lua_State* L);
 
 		int Component_GetNameArray(lua_State* L);
 		int Component_GetLayerArray(lua_State* L);
@@ -138,6 +140,7 @@ namespace wi::lua::scene
 		int Component_GetVoxelGridArray(lua_State* L);
 		int Component_GetMetadataArray(lua_State* L);
 		int Component_GetCharacterArray(lua_State* L);
+		int Component_GetOutputsArray(lua_State* L);
 
 		int Entity_GetNameArray(lua_State* L);
 		int Entity_GetLayerArray(lua_State* L);
@@ -169,6 +172,7 @@ namespace wi::lua::scene
 		int Entity_GetVoxelGridArray(lua_State* L);
 		int Entity_GetMetadataArray(lua_State* L);
 		int Entity_GetCharacterArray(lua_State* L);
+		int Entity_GetOutputsArray(lua_State* L);
 
 		int Component_RemoveName(lua_State* L);
 		int Component_RemoveLayer(lua_State* L);
@@ -200,6 +204,7 @@ namespace wi::lua::scene
 		int Component_RemoveVoxelGrid(lua_State* L);
 		int Component_RemoveMetadata(lua_State* L);
 		int Component_RemoveCharacter(lua_State* L);
+		int Component_RemoveOutputs(lua_State* L);
 
 		int Component_Attach(lua_State* L);
 		int Component_Detach(lua_State* L);
@@ -2059,6 +2064,24 @@ namespace wi::lua::scene
 
 		int SetPathGoal(lua_State* L);
 		int GetPathQuery(lua_State* L);
+	};
+
+	class EntityOutputsComponent_BindLua
+	{
+	private:
+		wi::scene::EntityOutputsComponent owning;
+	public:
+		wi::scene::EntityOutputsComponent* component = nullptr;
+
+		inline static constexpr char className[] = "EntityOutputsComponent";
+		static Luna<EntityOutputsComponent_BindLua>::FunctionType methods[];
+		static Luna<EntityOutputsComponent_BindLua>::PropertyType properties[];
+
+		EntityOutputsComponent_BindLua(wi::scene::EntityOutputsComponent* component) :component(component) {}
+		EntityOutputsComponent_BindLua(lua_State* L) : component(&owning) {}
+
+		int GetTable(lua_State* L);
+		
 	};
 }
 

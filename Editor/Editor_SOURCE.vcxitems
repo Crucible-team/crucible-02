@@ -40,10 +40,12 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)MaterialWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)MeshWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)MetadataWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)EntityOutputsWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ModelImporter_FBX.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ModelImporter_GLTF.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ModelImporter_OBJ.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)NameWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)NodeEditorWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ObjectWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)PaintToolWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)GraphicsWindow.cpp" />
@@ -117,8 +119,10 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)MaterialWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)MeshWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)MetadataWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)EntityOutputsWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ModelImporter.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)NameWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)NodeEditorWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ObjectWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)PaintToolWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)GraphicsWindow.h" />

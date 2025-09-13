@@ -44,6 +44,8 @@ void NameWindow::Create(EditorComponent* _editor)
 				name = &editor->GetCurrentScene().names.Create(x.entity);
 			}
 			name->name = args.sValue;
+			// Notify node editor about entity rename so its node + connections update immediately
+			editor->nodeEditorWnd.OnEntityRenamed(x.entity, args.sValue);
 		}
 		editor->componentsWnd.RefreshEntityTree();
 	});

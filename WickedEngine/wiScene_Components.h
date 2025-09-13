@@ -2429,6 +2429,26 @@ namespace wi::scene
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
 	};
 
+	// Holds Source-style entity Outputs as rows.
+	// Functionally similar to MetadataComponent (simple data container with serialization),
+	// but each row contains multiple fields: event, target, input, parameter, delay, once.
+	struct EntityOutputsComponent
+	{
+		struct OutputBinding
+		{
+			std::string event;      // eg. "OnStart"
+			std::string target;     // target entity name or identifier
+			std::string input;      // input to invoke on target, eg. "Remove"
+			std::string parameter;  // optional string parameter (can be empty)
+			float       delay = 0;  // seconds to defer firing
+			int			refire  = -1; // if true, fire only once
+		};
+
+		wi::vector<OutputBinding> outputs;
+
+		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
+	};
+
 	struct CharacterComponent
 	{
 		enum FLAGS

@@ -1645,7 +1645,13 @@ The decal component is a textured sticker that can be put down onto meshes. Most
 - GetSlopeBlendPower() : float
 
 #### MetadataComponent
-The metadata component can store and retrieve an arbitrary amount of named user values for an entity. It is possible to use the same name for multiple of different value types, but one value can not have multiple entries with the same name. 
+The metadata component can store and retrieve an arbitrary amount of named user values for an entity.
+
+Note (0.72.0):
+- Keys are now unique within each value type (bool/int/float/string). Setting an existing key overwrites the value.
+- Insertion order is preserved per type; removals reindex correctly.
+- The same key name can still be used across different value types.
+- Lua API remains unchanged.
 
 - HasBool(string name) : bool
 - HasInt(string name) : bool
