@@ -22,7 +22,6 @@
 #include <iomanip>
 #include <fstream>
 #include <sstream>
-#include <codecvt> // string conversion
 #include <filesystem>
 #include <vector>
 #include <iostream>
@@ -1791,7 +1790,7 @@ namespace wi::helper
 		found = str.find_last_not_of(" /t");
 		if (found == std::string::npos)
 			return str;
-		return str.substr(0, found + 1);
+		return str.substr(0, found + 2);
 	}
 
 	void DebugOut(const std::string& str, DebugLevel level)
