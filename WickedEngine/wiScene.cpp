@@ -12,6 +12,7 @@
 #include "wiLua.h"
 #include "wiAllocator.h"
 #include "wiProfiler.h"
+#include "wiSurfaceManager.h"
 
 #include "shaders/ShaderInterop_SurfelGI.h"
 #include "shaders/ShaderInterop_DDGI.h"
@@ -30,6 +31,8 @@ using namespace wi::primitive;
 namespace wi::scene
 {
 	static constexpr uint32_t small_subtask_groupsize = 256u;
+	wi::SpinLock model_load_mutex;
+	wi::vector<wi::ecs::Entity> recently_loaded_entities_global;
 
 	void Scene::Update(float dt)
 	{
@@ -45,6 +48,8 @@ namespace wi::scene
 		RunScriptUpdateSystem(ctx);
 
 		RunSplineUpdateSystem(ctx);
+
+		RunLifetimeUpdateSystem(ctx);
 
 		ScanAnimationDependencies();
 
@@ -1103,6 +1108,27 @@ namespace wi::scene
 			}
 		}
 		collider_bvh.Build(aabb_colliders_cpu, collider_count_cpu);
+		
+		// Fire hook for loaded and merged entities:
+		/*if (!other.recently_loaded_entities.empty())
+		{
+			std::string entity_table = "local NewSceneEntities = {";
+			bool first = true;
+			for (auto& entity : other.recently_loaded_entities)
+			{
+				if (!first)
+				{
+					entity_table += ",";
+				}
+				entity_table += std::to_string(entity);
+				first = false;
+			}
+			entity_table += "}; ";
+
+			wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [entity_table](uint64_t userdata) {
+				wi::lua::RunText(entity_table + "if type(OnSceneLoaded) == 'function' then OnSceneLoaded(NewSceneEntities) end");
+				});
+		}*/
 	}
 	Entity Scene::Instantiate(Scene& prefab, bool attached)
 	{
@@ -1171,6 +1197,11 @@ namespace wi::scene
 
 	void Scene::Entity_Remove(Entity entity, bool recursive, bool keep_sorted)
 	{
+		// Queue the Lua callback for entity removal to be executed on the main thread
+		wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [entity](uint64_t userdata) {
+			wi::lua::RunText("if type(OnEntityRemoved) == \"function\" then OnEntityRemoved(" + std::to_string(entity) + ") end");
+			});
+
 		if (recursive)
 		{
 			wi::vector<Entity> entities_to_remove;
@@ -6205,7 +6236,44 @@ namespace wi::scene
 		wi::jobsystem::Wait(ctx);
 	}
 
-	Scene::RayIntersectionResult Scene::Intersects(const Ray& ray, uint32_t filterMask, uint32_t layerMask, uint32_t lod) const
+	void Scene::RunLifetimeUpdateSystem(wi::jobsystem::context& ctx)
+	{
+		wi::jobsystem::Dispatch(ctx, (uint32_t)lifetimes.GetCount(), small_subtask_groupsize, [&](wi::jobsystem::JobArgs args) {
+			LifetimeComponent& lifetime_component = lifetimes[args.jobIndex];
+			// Only process if lifetime is not infinite (0 means infinite)
+			if (lifetime_component.lifetime > 0.0f)
+			{
+				lifetime_component.current_time += dt;
+				float remaining_time = lifetime_component.lifetime - lifetime_component.current_time;
+
+				if (lifetime_component.fade_out_time > 0.0f && remaining_time <= lifetime_component.fade_out_time)
+				{
+					Entity entity = lifetimes.GetEntity(args.jobIndex);
+					ObjectComponent* object_component = objects.GetComponent(entity);
+					MaterialComponent* material_component = materials.GetComponent(entity);
+
+					float fade_alpha = wi::math::Lerp(0.0f, 1.0f, remaining_time / lifetime_component.fade_out_time);
+
+					if (object_component != nullptr)
+					{
+						object_component->color.w = fade_alpha;
+					}
+					if (material_component != nullptr)
+					{
+						material_component->baseColor.w = fade_alpha;
+					}
+				}
+
+				if (lifetime_component.current_time >= lifetime_component.lifetime)
+				{
+					Entity entity = lifetimes.GetEntity(args.jobIndex);
+					Entity_Remove(entity);
+				}
+			}
+		});
+	}
+
+	Scene::RayIntersectionResult Scene::Intersects(const Ray& ray, uint32_t filterMask, uint32_t layerMask, uint32_t lod, bool InpactEffects) const
 	{
 		RayIntersectionResult result;
 
@@ -6383,6 +6451,7 @@ namespace wi::scene
 							result.vertexID1 = (int)i1;
 							result.vertexID2 = (int)i2;
 							result.bary = bary;
+							HandleIntersectionEffects(result, InpactEffects);
 						}
 					}
 				};
@@ -8841,15 +8910,15 @@ namespace wi::scene
 		}
 	}
 
-	PickResult Pick(const wi::primitive::Ray& ray, uint32_t filterMask, uint32_t layerMask, const Scene& scene, uint32_t lod)
+	PickResult Pick(const wi::primitive::Ray& ray, uint32_t filterMask, uint32_t layerMask, Scene& scene, uint32_t lod)
 	{
 		return scene.Intersects(ray, filterMask, layerMask, lod);
 	}
-	SceneIntersectSphereResult SceneIntersectSphere(const wi::primitive::Sphere& sphere, uint32_t filterMask, uint32_t layerMask, const Scene& scene, uint32_t lod)
+	SceneIntersectSphereResult SceneIntersectSphere(const wi::primitive::Sphere& sphere, uint32_t filterMask, uint32_t layerMask, Scene& scene, uint32_t lod)
 	{
 		return scene.Intersects(sphere, filterMask, layerMask, lod);
 	}
-	SceneIntersectCapsuleResult SceneIntersectCapsule(const wi::primitive::Capsule& capsule, uint32_t filterMask, uint32_t layerMask, const Scene& scene, uint32_t lod)
+	SceneIntersectCapsuleResult SceneIntersectCapsule(const wi::primitive::Capsule& capsule, uint32_t filterMask, uint32_t layerMask, Scene& scene, uint32_t lod)
 	{
 		return scene.Intersects(capsule, filterMask, layerMask, lod);
 	}
@@ -9527,6 +9596,59 @@ namespace wi::scene
 					XMFLOAT3 roll_pitch_yaw = wi::math::QuaternionToRollPitchYaw(transform->rotation_local);
 					humanoid.knee_bending *= (roll_pitch_yaw.y / XM_PI * 180.0f) < 0 ? -1 : 1; // MIXAMO fix!
 				}
+			}
+		}
+	}
+	void Scene::HandleIntersectionEffects(RayIntersectionResult& result, bool DoFX) const
+	{
+		const ObjectComponent* object = objects.GetComponent(result.entity);
+		if (object == nullptr)
+			return;
+	
+		const MeshComponent* mesh = meshes.GetComponent(object->meshID);
+		if (mesh == nullptr)
+			return;
+	
+		if (result.subsetIndex >= 0 && (size_t)result.subsetIndex < mesh->subsets.size())
+		{
+			const MeshComponent::MeshSubset& subset = mesh->subsets[result.subsetIndex];
+			const MaterialComponent* material = materials.GetComponent(subset.materialID);
+			
+			if (material != nullptr)
+			{
+				result.SurfacePropIndex = material->surfaceIndex;
+				/*if (!DoFX)
+					return;
+				const Surface* surface = wi::SurfaceManager::Get().GetSurface(material->surfaceIndex);
+				if (surface != nullptr)
+				{
+					// Play impact sound
+					if (surface->impact_sound.IsValid())
+					{
+						wi::audio::SoundInstance sound_instance;
+						wi::audio::CreateSoundInstance(&surface->impact_sound, &sound_instance);
+	
+						wi::audio::SoundInstance3D sound_instance_3d;
+						sound_instance_3d.emitterPos = result.position;
+						wi::audio::Update3D(&sound_instance, sound_instance_3d);
+	
+						wi::audio::Play(&sound_instance);
+					}
+	
+					// Instantiate impact particle effect
+					if (surface->impact_effect_prefab != nullptr)
+					{
+						Entity particle_entity = Instantiate(*surface->impact_effect_prefab, true);
+						TransformComponent* transform = transforms.GetComponent(particle_entity);
+						if (transform != nullptr)
+						{
+							transform->ClearTransform();
+							transform->MatrixTransform(result.orientation);
+							transform->Translate(result.position);
+							transform->UpdateTransform();
+						}
+					}
+				}*/
 			}
 		}
 	}

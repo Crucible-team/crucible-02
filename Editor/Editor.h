@@ -290,6 +290,7 @@ public:
 	~Editor() override
 	{
 		config.Commit();
+		Application::~Application();
 	}
 };
 

@@ -3164,4 +3164,5 @@ namespace wi::scene
 			precomputed_node_distances[i] = distance;
 		}
 	}
+
 }

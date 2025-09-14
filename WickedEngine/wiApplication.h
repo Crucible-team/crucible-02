@@ -7,6 +7,7 @@
 #include "wiGraphics.h"
 #include "wiEventHandler.h"
 #include "wiCanvas.h"
+#include "wiSurfaceManager.h"
 
 #include <memory>
 #include <string>
@@ -45,7 +46,7 @@ namespace wi
 		wi::graphics::Texture rendertargetPreHDR10;
 
 	public:
-		virtual ~Application() = default;
+		virtual ~Application() { wi::SurfaceManager::Destroy(); };
 
 		bool is_window_active = true;
 		bool allow_hdr = true;

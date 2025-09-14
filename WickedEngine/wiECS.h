@@ -12,6 +12,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include "wiLua.h" // Added for Lua callbacks
 
 // Entity-Component System
 namespace wi::ecs
@@ -27,7 +28,17 @@ namespace wi::ecs
 	inline Entity CreateEntity()
 	{
 		static std::atomic<Entity> next{ INVALID_ENTITY + 1 };
-		return next.fetch_add(1);
+		Entity new_entity = next.fetch_add(1);
+		// Call Lua callback for entity creation
+		// 
+		// Queue the Lua callback to be executed on the main thread
+		// The EVENT_THREAD_SAFE_POINT is designed for this purpose,
+		// ensuring the lambda is executed on the main thread at a safe point.
+		wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [new_entity](uint64_t userdata) {
+			// This code will now run on the main thread
+			wi::lua::RunText("if type(OnEntityCreated) == \"function\" then OnEntityCreated(" + std::to_string(new_entity) + ") end");
+			});
+		return new_entity;
 	}
 
 	class ComponentLibrary;
@@ -72,6 +83,7 @@ namespace wi::ecs
 	// This is the safe way to serialize an entity
 	inline void SerializeEntity(wi::Archive& archive, Entity& entity, EntitySerializer& seri)
 	{
+
 		if (archive.IsReadMode())
 		{
 			// Entities are always serialized as uint64_t for back-compat
@@ -95,6 +107,11 @@ namespace wi::ecs
 			{
 				entity = (Entity)mem;
 			}
+
+			// After entity is set
+			wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [entity](uint64_t userdata) {
+				wi::lua::RunText("if type(OnEntityDeserialized) == \"function\" then OnEntityDeserialized(" + std::to_string(entity) + ") end");
+				});
 		}
 		else
 		{
@@ -297,6 +314,11 @@ namespace wi::ecs
 
 			// Also push corresponding entity:
 			entities.push_back(entity);
+
+			wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [entity](uint64_t userdata) {
+				// This code will now run on the main thread
+				wi::lua::RunText("if type(OnComponentCreated) == \"function\" then OnComponentCreated(" + std::to_string(entity) + ") end");
+				});
 
 			return components.back();
 		}

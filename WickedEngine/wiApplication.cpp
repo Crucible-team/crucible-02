@@ -16,6 +16,7 @@
 #include "wiImage.h"
 #include "wiEventHandler.h"
 #include "wiPlatform.h"
+#include "wiSurfaceManager.h"
 
 #ifdef PLATFORM_PS5
 #include "wiGraphicsDevice_PS5.h"
@@ -58,6 +59,9 @@ namespace wi
 		assert(wi::initializer::IsInitializeFinished(wi::initializer::INITIALIZED_SYSTEM_LUA));
 		Luna<wi::lua::Application_BindLua>::push_global(wi::lua::GetLuaState(), "main", this);
 		Luna<wi::lua::Application_BindLua>::push_global(wi::lua::GetLuaState(), "application", this);
+
+		wi::SurfaceManager::Create();
+		wi::SurfaceManager::Get().LoadSurfaces("Content/scripts/surfaces.lua");
 	}
 
 	void Application::ActivatePath(RenderPath* component, float fadeSeconds, wi::Color fadeColor, FadeManager::FadeType fadetype)
@@ -235,7 +239,7 @@ namespace wi
 			}
 			else
 			{
-				const std::string startup_lua_filename = workingdir + "startup.lua";
+				const std::string startup_lua_filename = workingdir + "main.lua";
 				if (wi::helper::FileExists(startup_lua_filename))
 				{
 					if (wi::lua::RunFile(startup_lua_filename))
@@ -243,7 +247,7 @@ namespace wi
 						wi::backlog::post("Executed startup file: " + startup_lua_filename);
 					}
 				}
-				const std::string startup_luab_filename = workingdir + "startup.luab";
+				const std::string startup_luab_filename = workingdir + "main.luab";
 				if (wi::helper::FileExists(startup_luab_filename))
 				{
 					if (wi::lua::RunBinaryFile(startup_luab_filename))

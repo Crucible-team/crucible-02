@@ -15,6 +15,7 @@
 #include "wiBVH.h"
 #include "wiPathQuery.h"
 #include "wiAllocator.h"
+#include "wiSurface.h"
 
 namespace wi::scene
 {
@@ -259,6 +260,8 @@ namespace wi::scene
 
 		int customShaderID = -1;
 		uint4 userdata = uint4(0, 0, 0, 0); // can be accessed by custom shader
+
+		int surfaceIndex = -1;
 
 		wi::ecs::Entity cameraSource = wi::ecs::INVALID_ENTITY; // take texture from camera render
 
@@ -2681,4 +2684,14 @@ namespace wi::scene
 
 		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
 	};
+
+		struct LifetimeComponent
+	{
+		float lifetime = 0.0f; // seconds, 0 means infinite
+		float current_time = 0.0f; // seconds
+		float fade_out_time = 0.0f; // seconds
+
+		void Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri);
+	};
+
 }

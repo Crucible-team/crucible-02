@@ -751,6 +751,36 @@ int Scene_BindLua::Merge(lua_State* L)
 		if (other)
 		{
 			scene->Merge(*other->scene);
+
+			wi::vector<wi::ecs::Entity> entities_to_process;
+			{
+				std::scoped_lock lock(model_load_mutex);
+				if (!recently_loaded_entities_global.empty())
+				{
+					entities_to_process = recently_loaded_entities_global;
+					recently_loaded_entities_global.clear();
+				}
+			}
+
+			if (!entities_to_process.empty())
+			{
+				std::string entity_table = "local entities = {";
+				bool first = true;
+				for (auto& entity : entities_to_process)
+				{
+					if (!first)
+					{
+						entity_table += ",";
+					}
+					entity_table += std::to_string(entity);
+					first = false;
+				}
+				entity_table += "}; ";
+
+				wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [entity_table](uint64_t userdata) {
+					wi::lua::RunText(entity_table + "if type(OnSceneLoaded) == 'function' then OnSceneLoaded(entities) end");
+					});
+			}
 		}
 		else
 		{
@@ -947,6 +977,7 @@ int Scene_BindLua::Intersects(lua_State* L)
 		uint32_t filterMask = wi::enums::FILTER_ALL;
 		uint32_t layerMask = ~0u;
 		uint lod = 0;
+		bool fx = 0;
 		if (argc > 1)
 		{
 			filterMask = (uint32_t)wi::lua::SGetInt(L, 2);
@@ -956,14 +987,19 @@ int Scene_BindLua::Intersects(lua_State* L)
 				if (argc > 3)
 				{
 					lod = (uint32_t)wi::lua::SGetInt(L, 4);
+					if (argc > 4)
+					{
+						fx = (uint32_t)wi::lua::SGetBool(L, 5);
+					}
 				}
+
 			}
 		}
 
 		Ray_BindLua* ray = Luna<Ray_BindLua>::lightcheck(L, 1);
 		if (ray != nullptr)
 		{
-			auto result = scene->Intersects(ray->ray, filterMask, layerMask, lod);
+			auto result = scene->Intersects(ray->ray, filterMask, layerMask, lod, fx);
 			wi::lua::SSetInt(L, (int)result.entity);
 			Luna<Vector_BindLua>::push(L, result.position);
 			Luna<Vector_BindLua>::push(L, result.normal);
@@ -973,7 +1009,9 @@ int Scene_BindLua::Intersects(lua_State* L)
 			Luna<Matrix_BindLua>::push(L, result.orientation);
 			Luna<Vector_BindLua>::push(L, result.uv);
 			wi::lua::SSetInt(L, (int)result.humanoid_bone);
-			return 9;
+			wi::lua::SSetInt(L, (int)result.SurfacePropIndex);
+
+			return 10;
 		}
 
 		Sphere_BindLua* sphere = Luna<Sphere_BindLua>::lightcheck(L, 1);

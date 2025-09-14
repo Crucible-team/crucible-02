@@ -271,6 +271,11 @@ namespace wi::scene
 				archive >> mesh_blend;
 			}
 
+			if (seri.GetVersion() >= 12)
+			{
+				archive >> surfaceIndex;
+			}
+
 			for (auto& x : textures)
 			{
 				if (!x.name.empty())
@@ -448,6 +453,11 @@ namespace wi::scene
 			if (seri.GetVersion() >= 11)
 			{
 				archive << mesh_blend;
+			}
+
+			if (seri.GetVersion() >= 12)
+			{
+				archive << surfaceIndex;
 			}
 		}
 	}
@@ -2540,6 +2550,24 @@ void MetadataComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 		}
 	}
 
+	void LifetimeComponent::Serialize(wi::Archive& archive, wi::ecs::EntitySerializer& seri)
+	{
+		if (archive.IsReadMode())
+		{
+			archive >> lifetime;
+			archive >> current_time;
+
+			archive >> fade_out_time;
+		}
+		else
+		{
+			archive << lifetime;
+			archive << current_time;
+
+			archive << fade_out_time;
+		}
+	}
+
 	void EntityOutputsComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 	{
 		if (archive.IsReadMode())
@@ -2788,6 +2816,16 @@ void MetadataComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 		FixupNans();
 #endif // _DEBUG
 
+		if (archive.IsReadMode())
+		{
+			std::scoped_lock lock(model_load_mutex);
+			recently_loaded_entities_global.clear();
+			for (auto& it : seri.remap)
+			{
+				recently_loaded_entities_global.push_back(it.second);
+			}
+		}
+
 		wi::jobsystem::Wait(seri.ctx); // This is needed before emitter material fixup that is below, because material CreateRenderDatas might be pending!
 
 		// Fixup old emittedparticle distortion basecolor slot -> normalmap slot
@@ -2820,6 +2858,7 @@ void MetadataComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 				archive.PatchUnknownJumpPosition(jump_after);
 			}
 		}
+		
 
 		wilog("Scene::Serialize took %.2f seconds", timer.elapsed_seconds());
 	}

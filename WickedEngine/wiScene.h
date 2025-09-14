@@ -21,6 +21,8 @@
 
 namespace wi::scene
 {
+	extern wi::SpinLock model_load_mutex;
+	extern wi::vector<wi::ecs::Entity> recently_loaded_entities_global;
 	struct Scene
 	{
 		virtual ~Scene() = default;
@@ -65,6 +67,7 @@ namespace wi::scene
 		wi::ecs::ComponentManager<CharacterComponent>& characters = componentLibrary.Register<CharacterComponent>("wi::scene::Scene::characters");
 		wi::ecs::ComponentManager<PhysicsConstraintComponent>& constraints = componentLibrary.Register<PhysicsConstraintComponent>("wi::scene::Scene::constraints", 6); // version = 6
 		wi::ecs::ComponentManager<SplineComponent>& splines = componentLibrary.Register<SplineComponent>("wi::scene::Scene::splines", 2); // version = 2
+		wi::ecs::ComponentManager<LifetimeComponent>& lifetimes = componentLibrary.Register<LifetimeComponent>("wi::scene::Scene::lifetimes");
 
 		// Non-serialized attributes:
 		float dt = 0;
@@ -486,6 +489,7 @@ namespace wi::scene
 		void RunFontUpdateSystem(wi::jobsystem::context& ctx);
 		void RunCharacterUpdateSystem(wi::jobsystem::context& ctx);
 		void RunSplineUpdateSystem(wi::jobsystem::context& ctx);
+		void RunLifetimeUpdateSystem(wi::jobsystem::context& ctx);
 
 
 		struct RayIntersectionResult
@@ -503,6 +507,7 @@ namespace wi::scene
 			XMFLOAT2 bary = XMFLOAT2(0, 0);
 			XMFLOAT4X4 orientation = wi::math::IDENTITY_MATRIX;
 			HumanoidComponent::HumanoidBone humanoid_bone = HumanoidComponent::HumanoidBone::Count;
+			uint SurfacePropIndex = 0;
 
 			constexpr bool operator==(const RayIntersectionResult& other) const
 			{
@@ -514,7 +519,7 @@ namespace wi::scene
 		//	filterMask		:	filter based on type
 		//	layerMask		:	filter based on layer
 		//	lod				:	specify min level of detail for meshes
-		RayIntersectionResult Intersects(const wi::primitive::Ray& ray, uint32_t filterMask = wi::enums::FILTER_OPAQUE, uint32_t layerMask = ~0, uint32_t lod = 0) const;
+		RayIntersectionResult Intersects(const wi::primitive::Ray& ray, uint32_t filterMask = wi::enums::FILTER_OPAQUE, uint32_t layerMask = ~0, uint32_t lod = 0, bool InpactEffects = false) const;
 
 		// Given a ray, finds the first intersection point against all mesh instances or colliders
 		//	returns true immediately if intersection was found, false otherwise
@@ -603,7 +608,9 @@ namespace wi::scene
 		// Duplicate colliders will be removed from the scene
 		void DeleteDuplicateColliders();
 
+
 	private:
+		void HandleIntersectionEffects(RayIntersectionResult& result, bool DoFX = false) const;
 		void UpdateHumanoidFacings();
 
 	};
@@ -667,15 +674,15 @@ namespace wi::scene
 
 	// Deprecated, use Scene::Intersects() function instead
 	using PickResult = Scene::RayIntersectionResult;
-	PickResult Pick(const wi::primitive::Ray& ray, uint32_t filterMask = wi::enums::FILTER_OPAQUE, uint32_t layerMask = ~0, const Scene& scene = GetScene(), uint32_t lod = 0);
+	PickResult Pick(const wi::primitive::Ray& ray, uint32_t filterMask = wi::enums::FILTER_OPAQUE, uint32_t layerMask = ~0, Scene& scene = GetScene(), uint32_t lod = 0);
 
 	// Deprecated, use Scene::Intersects() function instead
 	using SceneIntersectSphereResult = Scene::SphereIntersectionResult;
-	SceneIntersectSphereResult SceneIntersectSphere(const wi::primitive::Sphere& sphere, uint32_t filterMask = wi::enums::FILTER_OPAQUE, uint32_t layerMask = ~0, const Scene& scene = GetScene(), uint32_t lod = 0);
+	SceneIntersectSphereResult SceneIntersectSphere(const wi::primitive::Sphere& sphere, uint32_t filterMask = wi::enums::FILTER_OPAQUE, uint32_t layerMask = ~0, Scene& scene = GetScene(), uint32_t lod = 0);
 
 	// Deprecated, use Scene::Intersects() function instead
 	using SceneIntersectCapsuleResult = Scene::SphereIntersectionResult;
-	SceneIntersectCapsuleResult SceneIntersectCapsule(const wi::primitive::Capsule& capsule, uint32_t filterMask = wi::enums::FILTER_OPAQUE, uint32_t layerMask = ~0, const Scene& scene = GetScene(), uint32_t lod = 0);
+	SceneIntersectCapsuleResult SceneIntersectCapsule(const wi::primitive::Capsule& capsule, uint32_t filterMask = wi::enums::FILTER_OPAQUE, uint32_t layerMask = ~0, Scene& scene = GetScene(), uint32_t lod = 0);
 
 }
 
