@@ -1398,12 +1398,6 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)Utility\win32ico.h">
       <Filter>UTILITY</Filter>
     </ClInclude>
-    <ClInclude Include="$(MSBuildThisFileDirectory)LUA\ljumptab.h">
-      <Filter>LUA</Filter>
-    </ClInclude>
-    <ClInclude Include="$(MSBuildThisFileDirectory)LUA\lopnames.h">
-      <Filter>LUA</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="$(MSBuildThisFileDirectory)LUA\lapi.c">
@@ -1413,6 +1407,9 @@
       <Filter>LUA</Filter>
     </ClCompile>
     <ClCompile Include="$(MSBuildThisFileDirectory)LUA\lbaselib.c">
+      <Filter>LUA</Filter>
+    </ClCompile>
+    <ClCompile Include="$(MSBuildThisFileDirectory)LUA\lbitlib.c">
       <Filter>LUA</Filter>
     </ClCompile>
     <ClCompile Include="$(MSBuildThisFileDirectory)LUA\lcode.c">
