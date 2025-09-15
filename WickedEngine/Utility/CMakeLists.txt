@@ -57,5 +57,4 @@ add_library(Utility STATIC
 
 set_target_properties("Utility" PROPERTIES
 	FOLDER "ThirdParty"
-	POSITION_INDEPENDENT_CODE ${WICKED_PIC}
 )

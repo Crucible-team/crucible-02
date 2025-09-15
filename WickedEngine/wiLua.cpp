@@ -30,17 +30,17 @@
 #include "wiVector.h"
 #include "wiVersion.h"
 #include "wiArguments.h"
-//#include "lrdb/server.hpp"
+
 
 #include <memory>
 
 // Declarations from LuaSocket objects you compiled in:
-/*extern "C" {
+extern "C" {
 	int luaopen_socket_core(lua_State* L);
 	int luaopen_mime_core(lua_State* L);
 }
 
-static void preload_luasocket(lua_State* L) {
+/*static void preload_luasocket(lua_State* L) {
 	lua_getglobal(L, "package");
 	lua_getfield(L, -1, "preload");           // package.preload
 
@@ -297,6 +297,8 @@ namespace wi::lua
 
 		int listen_port = 21110;//listen tcp port for debugger interface
 
+
+
 		lua_internal().m_luaState = luaL_newstate();
 		
 
@@ -307,6 +309,12 @@ namespace wi::lua
 			//lrdb::server debug_server(listen_port);
 			//debug_server.reset(lua_internal().m_luaState);//assign debug server to lua state(Required before script load)
 		}
+
+		luaL_requiref(wi::lua::GetLuaState(), "socket.core", luaopen_socket_core, 0);
+		lua_pop(wi::lua::GetLuaState(), 1);
+
+		luaL_requiref(wi::lua::GetLuaState(), "mime.core", luaopen_mime_core, 0);
+		lua_pop(wi::lua::GetLuaState(), 1);
 
 		//preload_luasocket(lua_internal().m_luaState);
 
