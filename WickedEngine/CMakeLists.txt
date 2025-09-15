@@ -1,5 +1,16 @@
 cmake_minimum_required(VERSION 3.19)
 
+# Ensure COPY_OR_SYMLINK_DIR_CMD is defined for custom commands
+if(WICKED_USE_SYMLINKS)
+    set(COPY_OR_SYMLINK_DIR_CMD create_symlink)
+else()
+    if(CMAKE_VERSION VERSION_LESS "3.26.0")
+        set(COPY_OR_SYMLINK_DIR_CMD copy_directory)
+    else()
+        set(COPY_OR_SYMLINK_DIR_CMD copy_directory_if_different)
+    endif()
+endif()
+
 set(MIN_OpenImageDenoise_VERSION "2.0")
 
 include(CMakePackageConfigHelpers)
@@ -68,6 +79,7 @@ else ()
 endif()
 
 add_subdirectory(LUA)
+add_subdirectory(luasocket)
 add_subdirectory(Utility)
 
 set(PHYSICS_REPO_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
@@ -77,9 +89,6 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   target_compile_options(Jolt PRIVATE -Wno-stringop-overflow)
 endif()
 
-set_target_properties(Jolt PROPERTIES
-    POSITION_INDEPENDENT_CODE ${WICKED_PIC}
-)
 add_compile_definitions(Jolt JPH_DEBUG_RENDERER)
 
 # Note: if you remove this glob, the wiShaderDump.h hack
@@ -97,10 +106,7 @@ add_library(${TARGET_NAME} ${WICKED_LIBRARY_TYPE}
 target_precompile_headers(${TARGET_NAME} PRIVATE WickedEngine.h)
 
 add_library(WickedEngine ALIAS ${TARGET_NAME})
-set_target_properties(${TARGET_NAME} PROPERTIES
-    PUBLIC_HEADER "${HEADER_FILES}"
-    POSITION_INDEPENDENT_CODE ${WICKED_PIC}
-)
+
 
 target_include_directories(${TARGET_NAME} SYSTEM PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
@@ -110,6 +116,7 @@ target_include_directories(${TARGET_NAME} SYSTEM PUBLIC
 set(WICKEDENGINE_STATIC_LIBRARIES
     Jolt
     LUA
+    luasocket
     Utility
 )
 
@@ -227,8 +234,8 @@ set_property(TARGET dxcompiler PROPERTY
 # Copy the shader library next to the executable
 add_custom_command(
     TARGET ${TARGET_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WICKED_ROOT_DIR}/WickedEngine/${LIBDXCOMPILER} ${CMAKE_CURRENT_BINARY_DIR}
-    COMMAND ${CMAKE_COMMAND} -E ${COPY_OR_SYMLINK_DIR_CMD} ${WICKED_ROOT_DIR}/WickedEngine/shaders ${CMAKE_CURRENT_BINARY_DIR}/shaders
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/${LIBDXCOMPILER} ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND ${CMAKE_COMMAND} -E ${COPY_OR_SYMLINK_DIR_CMD} ${CMAKE_CURRENT_SOURCE_DIR}/shaders ${CMAKE_CURRENT_BINARY_DIR}/shaders
 )
 
 set_property(SOURCE

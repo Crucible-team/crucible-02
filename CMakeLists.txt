@@ -10,6 +10,7 @@ if (${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
 endif()
 
 project(WickedEngine)
+set(CMAKE_VS_SOLUTION_NAME "WickedEngine")
 
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported)
@@ -136,9 +137,7 @@ add_custom_target(Content
    VERBATIM
 )
 
-if (WICKED_EDITOR)
-    add_subdirectory(Editor)
-endif()
+add_subdirectory(Editor)
 
 if (WICKED_TESTS)
     add_subdirectory(Samples/Tests)
@@ -158,6 +157,4 @@ if (WICKED_WINDOWS_TEMPLATE)
 endif()
 
 option(WICKED_GAME_SAMPLE "Build WickedEngine Game Exe" ON)
-if (WICKED_GAME_SAMPLE)
-    add_subdirectory(Samples/Game_EXE)
-endif()
+add_subdirectory(Samples/Game_EXE)

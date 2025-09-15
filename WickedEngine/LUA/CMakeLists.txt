@@ -20,7 +20,6 @@ endif()
 
 set_target_properties(LUA PROPERTIES
     FOLDER "ThirdParty"
-    POSITION_INDEPENDENT_CODE ${WICKED_PIC}
 )
 
 install(FILES ${LUA_HEADERS}
