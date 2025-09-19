@@ -548,6 +548,9 @@ Luna<Scene_BindLua>::FunctionType Scene_BindLua::methods[] = {
 	lunamethod(Scene_BindLua, Entity_Remove_Async),
 	lunamethod(Scene_BindLua, Entity_Duplicate),
 	lunamethod(Scene_BindLua, Entity_IsDescendant),
+	lunamethod(Scene_BindLua, Entity_CreateMeshFromData),
+	lunamethod(Scene_BindLua, Entity_CreateMeshFromDataWithUVs),
+	lunamethod(Scene_BindLua, Entity_CreateMeshFromDataWithUVsAndSubsets),
 	lunamethod(Scene_BindLua, Component_CreateName),
 	lunamethod(Scene_BindLua, Component_CreateLayer),
 	lunamethod(Scene_BindLua, Component_CreateTransform),
@@ -959,6 +962,298 @@ int Scene_BindLua::Entity_IsDescendant(lua_State* L)
 		wi::lua::SError(L, "Scene::Entity_IsDescendant(Entity entity, Entity ancestor) not enough arguments!");
 	}
 	return 0;
+}
+
+int Scene_BindLua::Entity_CreateMeshFromData(lua_State* L)
+{
+	int argc = wi::lua::SGetArgCount(L);
+	if (argc < 3)
+	{
+		wi::lua::SError(L, "Entity_CreateMeshFromData(string name, table indices, table positions) not enough arguments!");
+		return 0;
+	}
+
+	std::string name = wi::lua::SGetString(L, 1);
+
+	wi::vector<uint32_t> indices;
+	if (lua_istable(L, 2))
+	{
+		size_t len = lua_rawlen(L, 2);
+		indices.reserve(len);
+		for (int i = 1; i <= len; i++)
+		{
+			lua_rawgeti(L, 2, i);
+			indices.push_back((uint32_t)lua_tointeger(L, -1));
+			lua_pop(L, 1);
+		}
+	}
+
+	wi::vector<XMFLOAT3> positions;
+	if (lua_istable(L, 3))
+	{
+		size_t len = lua_rawlen(L, 3);
+		positions.reserve(len);
+		for (int i = 1; i <= len; i++)
+		{
+			lua_rawgeti(L, 3, i);
+			if (lua_istable(L, -1))
+			{
+				lua_rawgeti(L, -1, 1);
+				float x = (float)lua_tonumber(L, -1);
+				lua_pop(L, 1);
+				lua_rawgeti(L, -1, 2);
+				float y = (float)lua_tonumber(L, -1);
+				lua_pop(L, 1);
+				lua_rawgeti(L, -1, 3);
+				float z = (float)lua_tonumber(L, -1);
+				lua_pop(L, 1);
+				positions.push_back(XMFLOAT3(x, y, z));
+			}
+			lua_pop(L, 1);
+		}
+	}
+
+	Entity entity = GetGlobalScene()->Entity_CreateMeshFromData(name, indices.size(), indices.data(), positions.size(), positions.data());
+	wi::lua::SSetLongLong(L, entity);
+	return 1;
+}
+
+int Scene_BindLua::Entity_CreateMeshFromDataWithUVs(lua_State* L)
+{
+	int argc = wi::lua::SGetArgCount(L);
+	if (argc < 4)
+	{
+		wi::lua::SError(L, "Entity_CreateMeshFromDataWithUVs(string name, table indices, table positions, table uvs) not enough arguments!");
+		return 0;
+	}
+
+	std::string name = wi::lua::SGetString(L, 1);
+
+	wi::vector<uint32_t> indices;
+	if (lua_istable(L, 2))
+	{
+		size_t len = lua_rawlen(L, 2);
+		indices.reserve(len);
+		for (int i = 1; i <= len; i++)
+		{
+			lua_rawgeti(L, 2, i);
+			indices.push_back((uint32_t)lua_tointeger(L, -1));
+			lua_pop(L, 1);
+		}
+	}
+
+	wi::vector<XMFLOAT3> positions;
+	if (lua_istable(L, 3))
+	{
+		size_t len = lua_rawlen(L, 3);
+		positions.reserve(len);
+		for (int i = 1; i <= len; i++)
+		{
+			lua_rawgeti(L, 3, i);
+			if (lua_istable(L, -1))
+			{
+				lua_rawgeti(L, -1, 1);
+				float x = (float)lua_tonumber(L, -1);
+				lua_pop(L, 1);
+				lua_rawgeti(L, -1, 2);
+				float y = (float)lua_tonumber(L, -1);
+				lua_pop(L, 1);
+				lua_rawgeti(L, -1, 3);
+				float z = (float)lua_tonumber(L, -1);
+				lua_pop(L, 1);
+				positions.push_back(XMFLOAT3(x, y, z));
+			}
+			lua_pop(L, 1);
+		}
+	}
+
+	wi::vector<XMFLOAT2> uvs;
+	if (lua_istable(L, 4))
+	{
+		size_t len = lua_rawlen(L, 4);
+		uvs.reserve(len);
+		for (int i = 1; i <= len; i++)
+		{
+			lua_rawgeti(L, 4, i);
+			if (lua_istable(L, -1))
+			{
+				lua_rawgeti(L, -1, 1);
+				float x = (float)lua_tonumber(L, -1);
+				lua_pop(L, 1);
+				lua_rawgeti(L, -1, 2);
+				float y = (float)lua_tonumber(L, -1);
+				lua_pop(L, 1);
+				uvs.push_back(XMFLOAT2(x, y));
+			}
+			lua_pop(L, 1);
+		}
+	}
+
+	Entity entity = GetGlobalScene()->Entity_CreateMeshFromDataWithUVs(name, indices.size(), indices.data(), positions.size(), positions.data(), uvs.data());
+	wi::lua::SSetLongLong(L, entity);
+	return 1;
+}
+
+int Scene_BindLua::Entity_CreateMeshFromDataWithUVsAndSubsets(lua_State* L)
+{
+	const int argc = wi::lua::SGetArgCount(L);
+	if (argc < 5)
+	{
+		wi::lua::SError(L, "Entity_CreateMeshFromDataWithUVsAndSubsets(string name, table indices, table positions, table uvs, table subsets [, table normals]) not enough arguments!");
+		return 0;
+	}
+
+	// 1) name
+	std::string name = wi::lua::SGetString(L, 1);
+
+	// 2) indices
+	wi::vector<uint32_t> indices;
+	if (lua_istable(L, 2)) {
+		const size_t len = lua_rawlen(L, 2);
+		indices.reserve(len);
+		for (int i = 1; i <= (int)len; ++i) {
+			lua_rawgeti(L, 2, i);
+			indices.push_back((uint32_t)lua_tointeger(L, -1));
+			lua_pop(L, 1);
+		}
+	}
+
+	// 3) positions { {x,y,z}, ... }
+	wi::vector<XMFLOAT3> positions;
+	if (lua_istable(L, 3)) {
+		const size_t len = lua_rawlen(L, 3);
+		positions.reserve(len);
+		for (int i = 1; i <= (int)len; ++i) {
+			lua_rawgeti(L, 3, i);
+			if (lua_istable(L, -1)) {
+				lua_rawgeti(L, -1, 1); float x = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+				lua_rawgeti(L, -1, 2); float y = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+				lua_rawgeti(L, -1, 3); float z = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+				positions.emplace_back(x, y, z);
+			}
+			lua_pop(L, 1);
+		}
+	}
+
+	// 4) uvs { {u,v}, ... }
+	wi::vector<XMFLOAT2> uvs;
+	if (lua_istable(L, 4)) {
+		const size_t len = lua_rawlen(L, 4);
+		uvs.reserve(len);
+		for (int i = 1; i <= (int)len; ++i) {
+			lua_rawgeti(L, 4, i);
+			if (lua_istable(L, -1)) {
+				lua_rawgeti(L, -1, 1); float u = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+				lua_rawgeti(L, -1, 2); float v = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+				uvs.emplace_back(u, v);
+			}
+			lua_pop(L, 1);
+		}
+	}
+
+	if (positions.size() != uvs.size()) {
+		wi::lua::SErrorf(L, "positions and uvs length must match (got %llu vs %llu)!",
+			(unsigned long long)positions.size(), (unsigned long long)uvs.size());
+		return 0;
+	}
+
+	// 5) subsets { {offset,count,material}, ... }
+	wi::vector<MeshSubsetInput> subs;
+	if (lua_istable(L, 5)) {
+		const size_t len = lua_rawlen(L, 5);
+		subs.reserve(len);
+		for (int i = 1; i <= (int)len; ++i) {
+			lua_rawgeti(L, 5, i);
+			if (lua_istable(L, -1)) {
+				uint32_t indexOffset = 0, indexCount = 0;
+				std::string materialName;
+
+				// array form
+				lua_rawgeti(L, -1, 1);
+				if (!lua_isnil(L, -1)) indexOffset = (uint32_t)lua_tointeger(L, -1);
+				lua_pop(L, 1);
+				lua_rawgeti(L, -1, 2);
+				if (!lua_isnil(L, -1)) indexCount = (uint32_t)lua_tointeger(L, -1);
+				lua_pop(L, 1);
+				lua_rawgeti(L, -1, 3);
+				if (!lua_isnil(L, -1)) materialName = wi::lua::SGetString(L, -1);
+				lua_pop(L, 1);
+
+				// named form fallback
+				if (indexCount == 0 && indexOffset == 0 && materialName.empty()) {
+					lua_getfield(L, -1, "offset");
+					if (!lua_isnil(L, -1)) indexOffset = (uint32_t)lua_tointeger(L, -1);
+					lua_pop(L, 1);
+					lua_getfield(L, -1, "count");
+					if (!lua_isnil(L, -1)) indexCount = (uint32_t)lua_tointeger(L, -1);
+					lua_pop(L, 1);
+					lua_getfield(L, -1, "material");
+					if (!lua_isnil(L, -1)) materialName = wi::lua::SGetString(L, -1);
+					lua_pop(L, 1);
+					if (materialName.empty()) {
+						lua_getfield(L, -1, "name");
+						if (!lua_isnil(L, -1)) materialName = wi::lua::SGetString(L, -1);
+						lua_pop(L, 1);
+					}
+				}
+
+				MeshSubsetInput in{};
+				in.indexOffset = indexOffset;   // 0-based
+				in.indexCount = indexCount;
+				in.materialName = std::move(materialName);
+				subs.push_back(std::move(in));
+			}
+			lua_pop(L, 1);
+		}
+	}
+
+	// subset bounds check
+	for (const auto& s : subs) {
+		const uint64_t end = (uint64_t)s.indexOffset + (uint64_t)s.indexCount;
+		if (end > indices.size()) {
+			wi::lua::SErrorf(L, "subset out of bounds: offset=%u count=%u (indices=%llu)",
+				s.indexOffset, s.indexCount, (unsigned long long)indices.size());
+			return 0;
+		}
+	}
+
+	// 6) OPTIONAL normals { {nx,ny,nz}, ... }
+	const bool has_normals = (argc >= 6) && lua_istable(L, 6);
+	wi::vector<XMFLOAT3> normals;
+	if (has_normals) {
+		const size_t len = lua_rawlen(L, 6);
+		normals.reserve(len);
+		for (int i = 1; i <= (int)len; ++i) {
+			lua_rawgeti(L, 6, i);
+			if (lua_istable(L, -1)) {
+				lua_rawgeti(L, -1, 1); float nx = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+				lua_rawgeti(L, -1, 2); float ny = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+				lua_rawgeti(L, -1, 3); float nz = (float)lua_tonumber(L, -1); lua_pop(L, 1);
+				normals.emplace_back(nx, ny, nz);
+			}
+			lua_pop(L, 1);
+		}
+
+		if (normals.size() != positions.size()) {
+			wi::lua::SErrorf(L, "positions and normals length must match (got %llu vs %llu)!",
+				(unsigned long long)positions.size(), (unsigned long long)normals.size());
+			return 0;
+		}
+	}
+
+	// Call C++: pass normals pointer if provided, else nullptr
+	Scene* scene = GetGlobalScene();
+	Entity entity = scene->Entity_CreateMeshFromDataWithUVsAndSubsets(
+		name,
+		indices.size(), indices.data(),
+		positions.size(), positions.data(),
+		uvs.data(),
+		subs.size(), subs.data(),
+		has_normals ? normals.data() : nullptr
+	);
+
+	wi::lua::SSetLongLong(L, entity);
+	return 1;
 }
 
 int Scene_BindLua::UpdateHierarchy(lua_State* L)

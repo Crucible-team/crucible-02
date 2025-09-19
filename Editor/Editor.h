@@ -290,7 +290,8 @@ public:
 	~Editor() override
 	{
 		config.Commit();
-		Application::~Application();
+		wi::SurfaceManager::Destroy();
+		//Application::~Application();
 	}
 };
 

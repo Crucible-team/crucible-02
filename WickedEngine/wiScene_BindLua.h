@@ -50,6 +50,9 @@ namespace wi::lua::scene
 		int Entity_Remove_Async(lua_State* L);
 		int Entity_Duplicate(lua_State* L);
 		int Entity_IsDescendant(lua_State* L);
+		int Entity_CreateMeshFromData(lua_State* L);
+		int Entity_CreateMeshFromDataWithUVs(lua_State* L);
+		int Entity_CreateMeshFromDataWithUVsAndSubsets(lua_State* L);
 
 		int Component_CreateName(lua_State* L);
 		int Component_CreateLayer(lua_State* L);
@@ -2084,4 +2087,3 @@ namespace wi::lua::scene
 		
 	};
 }
-

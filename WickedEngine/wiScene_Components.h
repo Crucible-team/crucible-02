@@ -2280,6 +2280,19 @@ namespace wi::scene
 			RightLittleIntermediate,
 			RightLittleDistal,
 
+			//Extra bones
+			Spine3,
+			Spine4,
+			LeftTrapezius,
+			RightTrapezius,
+			LeftBicep,
+			RightBicep,
+			LeftUlna,
+			RightUlna,
+			LeftWrist,
+			RightWrist,
+			Forward,
+
 			Count
 		};
 		wi::ecs::Entity bones[size_t(HumanoidBone::Count)] = {};
@@ -2312,6 +2325,10 @@ namespace wi::scene
 		XMFLOAT4 lookAtDeltaRotationState_Head = XMFLOAT4(0, 0, 0, 1);
 		XMFLOAT4 lookAtDeltaRotationState_LeftEye = XMFLOAT4(0, 0, 0, 1);
 		XMFLOAT4 lookAtDeltaRotationState_RightEye = XMFLOAT4(0, 0, 0, 1);
+		bool lookAtBasisCached = false;
+		XMFLOAT3 lookAtBasisForward = XMFLOAT3(0, 0, 1);
+		XMFLOAT3 lookAtBasisUp = XMFLOAT3(0, 1, 0);
+		XMFLOAT3 lookAtBasisRight = XMFLOAT3(1, 0, 0);
 		std::shared_ptr<void> ragdoll = nullptr; // physics system implementation-specific object
 		float default_facing = 0; // 0 = not yet computed, otherwise Z direction
 		float knee_bending = 0; // 0 = not yet computed, otherwise Z direction

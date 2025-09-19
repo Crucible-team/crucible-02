@@ -23,6 +23,12 @@ namespace wi::scene
 {
 	extern wi::SpinLock model_load_mutex;
 	extern wi::vector<wi::ecs::Entity> recently_loaded_entities_global;
+	struct MeshSubsetInput
+	{
+		uint32_t indexOffset;          // 0-based offset into the index buffer
+		uint32_t indexCount;           // number of indices in this subset
+		std::string materialName;      // optional: used to create/name a material entity
+	};
 	struct Scene
 	{
 		virtual ~Scene() = default;
@@ -33,7 +39,7 @@ namespace wi::scene
 		wi::ecs::ComponentManager<LayerComponent>& layers = componentLibrary.Register<LayerComponent>("wi::scene::Scene::layers");
 		wi::ecs::ComponentManager<TransformComponent>& transforms = componentLibrary.Register<TransformComponent>("wi::scene::Scene::transforms");
 		wi::ecs::ComponentManager<HierarchyComponent>& hierarchy = componentLibrary.Register<HierarchyComponent>("wi::scene::Scene::hierarchy");
-		wi::ecs::ComponentManager<MaterialComponent>& materials = componentLibrary.Register<MaterialComponent>("wi::scene::Scene::materials", 11); // version = 11
+		wi::ecs::ComponentManager<MaterialComponent>& materials = componentLibrary.Register<MaterialComponent>("wi::scene::Scene::materials", 99); // version = 11
 		wi::ecs::ComponentManager<MeshComponent>& meshes = componentLibrary.Register<MeshComponent>("wi::scene::Scene::meshes", 4); // version = 4
 		wi::ecs::ComponentManager<ImpostorComponent>& impostors = componentLibrary.Register<ImpostorComponent>("wi::scene::Scene::impostors");
 		wi::ecs::ComponentManager<ObjectComponent>& objects = componentLibrary.Register<ObjectComponent>("wi::scene::Scene::objects", 4); // version = 4
@@ -57,7 +63,7 @@ namespace wi::scene
 		wi::ecs::ComponentManager<ColliderComponent>& colliders = componentLibrary.Register<ColliderComponent>("wi::scene::Scene::colliders", 2); // version = 2
 		wi::ecs::ComponentManager<ScriptComponent>& scripts = componentLibrary.Register<ScriptComponent>("wi::scene::Scene::scripts");
 		wi::ecs::ComponentManager<ExpressionComponent>& expressions = componentLibrary.Register<ExpressionComponent>("wi::scene::Scene::expressions");
-		wi::ecs::ComponentManager<HumanoidComponent>& humanoids = componentLibrary.Register<HumanoidComponent>("wi::scene::Scene::humanoids", 3); // version = 3
+		wi::ecs::ComponentManager<HumanoidComponent>& humanoids = componentLibrary.Register<HumanoidComponent>("wi::scene::Scene::humanoids", 10); // version = 3
 		wi::ecs::ComponentManager<wi::terrain::Terrain>& terrains = componentLibrary.Register<wi::terrain::Terrain>("wi::scene::Scene::terrains", 5); // version = 5
 		wi::ecs::ComponentManager<wi::Sprite>& sprites = componentLibrary.Register<wi::Sprite>("wi::scene::Scene::sprites", 2); // version = 2
 		wi::ecs::ComponentManager<wi::SpriteFont>& fonts = componentLibrary.Register<wi::SpriteFont>("wi::scene::Scene::fonts");
@@ -359,6 +365,8 @@ namespace wi::scene
 			RECURSIVE = 1 << 0, // children entities will be also serialized
 			KEEP_INTERNAL_ENTITY_REFERENCES = 1 << 1, // entity handles inside components will be kept intact, they won't use remapping of wi::ecs::EntitySerializer
 		};
+
+		
 		// Serializes entity and all of its components to archive:
 		//	archive		: archive used for serializing data
 		//	seri		: serializer state for entity component system
@@ -447,6 +455,25 @@ namespace wi::scene
 			const uint32_t* indices,
 			size_t vertex_count,
 			const XMFLOAT3* positions
+		);
+		wi::ecs::Entity Entity_CreateMeshFromDataWithUVs(
+			const std::string& name,
+			size_t index_count,
+			const uint32_t* indices,
+			size_t vertex_count,
+			const XMFLOAT3* positions,
+			const XMFLOAT2* uvs
+		);
+		wi::ecs::Entity Entity_CreateMeshFromDataWithUVsAndSubsets(
+			const std::string& name,
+			size_t index_count,
+			const uint32_t* indices,
+			size_t vertex_count,
+			const XMFLOAT3* positions,
+			const XMFLOAT2* uvs,
+			size_t subset_count,
+			const MeshSubsetInput* subsets,
+			const XMFLOAT3* normals = nullptr
 		);
 
 		// Attaches an entity to a parent:

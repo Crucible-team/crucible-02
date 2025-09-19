@@ -1806,7 +1806,7 @@ namespace wi::scene
 
 		return entity;
 	}
-	Entity Scene::Entity_CreateMeshFromData(
+		Entity Scene::Entity_CreateMeshFromData(
 		const std::string& name,
 		size_t index_count,
 		const uint32_t* indices,
@@ -1846,6 +1846,134 @@ namespace wi::scene
 
 		// vertex buffer GPU data will be packed and uploaded here:
 		mesh.ComputeNormals(MeshComponent::COMPUTE_NORMALS_SMOOTH_FAST); // smooth fast is used because it will keep vertex/index count, only averages face normals
+
+		return entity;
+	}
+
+	Entity Scene::Entity_CreateMeshFromDataWithUVs(
+		const std::string& name,
+		size_t index_count,
+		const uint32_t* indices,
+		size_t vertex_count,
+		const XMFLOAT3* positions,
+		const XMFLOAT2* uvs
+	)
+	{
+		Entity entity = CreateEntity();
+
+		if (!name.empty())
+		{
+			names.Create(entity) = name;
+		}
+
+		layers.Create(entity);
+
+		transforms.Create(entity);
+
+		ObjectComponent& object = objects.Create(entity);
+
+		MeshComponent& mesh = meshes.Create(entity);
+
+		// object references the mesh entity (there can be multiple objects referencing one mesh):
+		object.meshID = entity;
+
+		mesh.indices.resize(index_count);
+		std::memcpy(mesh.indices.data(), indices, sizeof(uint32_t) * index_count);
+
+		mesh.vertex_positions.resize(vertex_count);
+		std::memcpy(mesh.vertex_positions.data(), positions, sizeof(XMFLOAT3) * vertex_count);
+
+		mesh.vertex_uvset_0.resize(vertex_count);
+		std::memcpy(mesh.vertex_uvset_0.data(), uvs, sizeof(XMFLOAT2) * vertex_count);
+
+		// Subset maps a part of the mesh to a material:
+		MeshComponent::MeshSubset& subset = mesh.subsets.emplace_back();
+		subset.indexCount = uint32_t(mesh.indices.size());
+		materials.Create(entity);
+		subset.materialID = entity; // the material component is created on the same entity as the mesh component, though it is not required as it could also use a different material entity
+
+		// vertex buffer GPU data will be packed and uploaded here:
+		mesh.ComputeNormals(MeshComponent::COMPUTE_NORMALS_SMOOTH_FAST); // smooth fast is used because it will keep vertex/index count, only averages face normals
+
+		//mesh.ComputeTangents();
+		mesh.CreateRenderData();
+
+		return entity;
+	}
+
+	Entity Scene::Entity_CreateMeshFromDataWithUVsAndSubsets(
+		const std::string& name,
+		size_t index_count,
+		const uint32_t* indices,
+		size_t vertex_count,
+		const XMFLOAT3* positions,
+		const XMFLOAT2* uvs,
+		size_t subset_count,
+		const MeshSubsetInput* subset_list,   // array length == subset_count
+		const XMFLOAT3* normals
+	)
+	{
+		Entity entity = CreateEntity();
+
+		if (!name.empty())           names.Create(entity) = name;
+		layers.Create(entity);
+		transforms.Create(entity);
+
+		ObjectComponent& object = objects.Create(entity);
+		MeshComponent& mesh = meshes.Create(entity);
+
+		// object references the mesh (you can have multiple objects pointing to the same mesh entity):
+		object.meshID = entity;
+
+		// --- Fill buffers:
+		mesh.indices.resize(index_count);
+		if (index_count && indices)
+			std::memcpy(mesh.indices.data(), indices, sizeof(uint32_t) * index_count);
+
+		mesh.vertex_positions.resize(vertex_count);
+		if (vertex_count && positions)
+			std::memcpy(mesh.vertex_positions.data(), positions, sizeof(XMFLOAT3) * vertex_count);
+
+		mesh.vertex_uvset_0.resize(vertex_count);
+		if (vertex_count && uvs)
+			std::memcpy(mesh.vertex_uvset_0.data(), uvs, sizeof(XMFLOAT2) * vertex_count);
+
+		if (vertex_count && normals)
+		{
+			mesh.vertex_normals.resize(vertex_count);
+			std::memcpy(mesh.vertex_normals.data(), normals, sizeof(XMFLOAT3) * vertex_count);
+		}
+
+		// --- Build subsets:
+		mesh.subsets.clear();
+		mesh.subsets.reserve(subset_count);
+
+		for (size_t i = 0; i < subset_count; ++i)
+		{
+			const MeshSubsetInput& in = subset_list[i];
+
+			MeshComponent::MeshSubset subset;
+			subset.indexOffset = in.indexOffset;                 // REQUIRED
+			subset.indexCount = in.indexCount;                  // REQUIRED
+
+			// Create a material entity for this subset (simple approach):
+			Entity matEnt = CreateEntity();
+			MaterialComponent& mat = materials.Create(matEnt);
+			if (!in.materialName.empty())
+				names.Create(matEnt) = in.materialName;
+
+			subset.materialID = matEnt;
+
+			mesh.subsets.push_back(subset);
+		}
+
+		// --- Derived data + GPU upload:
+		if (!normals)
+		{
+			// No normals provided: compute them
+			mesh.ComputeNormals(MeshComponent::COMPUTE_NORMALS_SMOOTH_FAST);
+		}
+		mesh.CreateRenderData();           // REQUIRED to upload vertex/uv streams
 
 		return entity;
 	}

@@ -193,6 +193,20 @@ namespace wi::lua
 
 	//throw error
 	void SError(lua_State* L, const std::string& error = "");
+	template <typename... Args>
+	inline void SErrorf(lua_State* L, const char* fmt, Args&&... args)
+	{
+		// first pass: size
+		int needed = std::snprintf(nullptr, 0, fmt, std::forward<Args>(args)...);
+		if (needed <= 0) { SError(L, fmt); return; }
+
+		std::string msg;
+		msg.resize((size_t)needed);
+		// second pass: write (+1 for terminator; many impls don’t require it with std::string)
+		std::snprintf(msg.data(), msg.size() + 1, fmt, std::forward<Args>(args)...);
+
+		SError(L, msg);
+	}
 	
 	// Compiles text file containing LUA source code to binary LUA code
 	bool CompileFile(const char* filename, wi::vector<uint8_t>& dst);

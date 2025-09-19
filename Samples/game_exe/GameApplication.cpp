@@ -263,6 +263,7 @@ void HotkeyRemap(Game_Application* main)
 Game_Application::~Game_Application()
 {
 	config.Commit();
+	wi::SurfaceManager::Destroy();
 }
 
 void Game_Application::Initialize()

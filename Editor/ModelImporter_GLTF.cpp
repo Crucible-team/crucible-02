@@ -160,6 +160,11 @@ void Import_VRMC_Bone(LoaderState& state, Entity boneEntity, const std::string& 
 void Import_Mixamo_Bone(LoaderState& state, Entity boneEntity, const tinygltf::Node& node);
 void Import_Makehuman_Bone(LoaderState& state, Entity boneEntity, const tinygltf::Node& node);
 
+void Import_HL_Bone(LoaderState& state, Entity armatureEntity, Entity boneEntity, const tinygltf::Node& node);
+void Import_HLHD_Bone(LoaderState& state, Entity armatureEntity, Entity boneEntity, const tinygltf::Node& node);
+void Import_Valve_Bone(LoaderState& state, Entity armatureEntity, Entity boneEntity, const tinygltf::Node& node);
+void Import_MoS_Bone(LoaderState& state, Entity armatureEntity, Entity boneEntity, const tinygltf::Node& node);
+
 static void ImportMetadata(LoaderState& state, Entity entity, const tinygltf::Value& extras)
 {
 	if (extras.IsObject())
@@ -1676,6 +1681,10 @@ void ImportModel_GLTF(const std::string& fileName, Scene& scene)
 
 			Import_Mixamo_Bone(state, boneEntity, state.gltfModel.nodes[jointIndex]);
 			Import_Makehuman_Bone(state, boneEntity, state.gltfModel.nodes[jointIndex]);
+			Import_MoS_Bone(state, armatureEntity, boneEntity, state.gltfModel.nodes[jointIndex]);
+			Import_HL_Bone(state, armatureEntity, boneEntity, state.gltfModel.nodes[jointIndex]);
+			Import_HLHD_Bone(state, armatureEntity, boneEntity, state.gltfModel.nodes[jointIndex]);
+			Import_Valve_Bone(state, armatureEntity, boneEntity, state.gltfModel.nodes[jointIndex]);
 		}
 	}
 
@@ -3774,6 +3783,967 @@ void Import_Makehuman_Bone(LoaderState& state, Entity boneEntity, const tinygltf
 	else if (!node.name.compare("ball_r"))
 	{
 		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightToes)] = boneEntity;
+	}
+}
+
+
+void Import_MoS_Bone(LoaderState& state, Entity armatureEntity, Entity boneEntity, const tinygltf::Node& node)
+{
+	auto get_humanoid = [&]() -> HumanoidComponent& {
+		HumanoidComponent* component = state.scene->humanoids.GetComponent(armatureEntity);
+		if (component == nullptr)
+		{
+			component = &state.scene->humanoids.Create(armatureEntity);
+			//component->default_look_direction = XMFLOAT3(0, 0, -1);
+		}
+		return *component;
+		};
+
+	if (!node.name.compare("pelvis"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Hips)] = boneEntity;
+	}
+	else if (!node.name.compare("spine_01"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Spine)] = boneEntity;
+	}
+	else if (!node.name.compare("spine_02"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Chest)] = boneEntity;
+	}
+	else if (!node.name.compare("spine_03"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::UpperChest)] = boneEntity;
+	}
+	else if (!node.name.compare("neck_01"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Neck)] = boneEntity;
+	}
+	else if (!node.name.compare("head"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Head)] = boneEntity;
+	}
+	else if (!node.name.compare("clavicle_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftShoulder)] = boneEntity;
+	}
+	else if (!node.name.compare("clavicle_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightShoulder)] = boneEntity;
+	}
+	else if (!node.name.compare("upperarm_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftUpperArm)] = boneEntity;
+	}
+	else if (!node.name.compare("upperarm_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightUpperArm)] = boneEntity;
+	}
+	else if (!node.name.compare("lowerarm_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLowerArm)] = boneEntity;
+	}
+	else if (!node.name.compare("lowerarm_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLowerArm)] = boneEntity;
+	}
+	else if (!node.name.compare("hand_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftHand)] = boneEntity;
+	}
+	else if (!node.name.compare("hand_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightHand)] = boneEntity;
+	}
+	else if (!node.name.compare("thumb_01_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbMetacarpal)] = boneEntity;
+	}
+	else if (!node.name.compare("thumb_01_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbMetacarpal)] = boneEntity;
+	}
+	else if (!node.name.compare("thumb_02_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("thumb_02_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("thumb_03_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("thumb_03_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("index_01_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("index_01_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("index_02_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("index_02_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("index_03_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("index_03_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("middle_01_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("middle_01_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("middle_02_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("middle_02_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("middle_03_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("middle_03_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ring_01_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ring_01_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ring_02_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("ring_02_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("ring_03_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ring_03_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("pinky_01_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("pinky_01_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("pinky_02_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("pinky_02_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("pinky_03_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("pinky_03_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("thigh_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftUpperLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("thigh_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightUpperLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("calf_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLowerLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("calf_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLowerLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("foot_l"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftFoot)] = boneEntity;
+	}
+	else if (!node.name.compare("foot_r"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightFoot)] = boneEntity;
+	}
+	else if (!node.name.compare("lefttoebase"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftToes)] = boneEntity;
+	}
+	else if (!node.name.compare("righttoebase"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightToes)] = boneEntity;
+	}
+}
+
+
+void Import_HL_Bone(LoaderState& state, Entity armatureEntity, Entity boneEntity, const tinygltf::Node& node)
+{
+	auto get_humanoid = [&]() -> HumanoidComponent& {
+		HumanoidComponent* component = state.scene->humanoids.GetComponent(armatureEntity);
+		if (component == nullptr)
+		{
+			component = &state.scene->humanoids.Create(armatureEntity);
+			//component->default_look_direction = XMFLOAT3(0, 0, -1);
+		}
+		return *component;
+		};
+
+	if (!node.name.compare("Bip02 Pelvis"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Hips)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 Spine"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Spine)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 Spine1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Chest)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 Spine2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::UpperChest)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 Neck"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Neck)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 Head"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Head)] = boneEntity;
+	}
+	else if (!node.name.compare("Bone01"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Jaw)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 L Arm"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftShoulder)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 R Arm"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightShoulder)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 L Arm1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftUpperArm)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 R Arm1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightUpperArm)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 L Arm2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLowerArm)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 R Arm2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLowerArm)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 L Hand"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftHand)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 R Hand"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightHand)] = boneEntity;
+	}
+	/*else if (!node.name.compare("mixamorig:LeftHandThumb1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbMetacarpal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandThumb1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbMetacarpal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandThumb2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandThumb2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandThumb3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandThumb3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandIndex1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandIndex1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandIndex2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandIndex2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandIndex3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandIndex3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandMiddle1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandMiddle1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandMiddle2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandMiddle2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandMiddle3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandMiddle3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandRing1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandRing1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandRing2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandRing2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandRing3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandRing3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandPinky1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandPinky1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandPinky2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandPinky2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandPinky3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandPinky3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleDistal)] = boneEntity;
+	}*/
+	else if (!node.name.compare("Bip02 L Leg"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftUpperLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 R Leg"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightUpperLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 L Leg1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLowerLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 R Leg1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLowerLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 L Foot"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftFoot)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip02 R Foot"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightFoot)] = boneEntity;
+	}
+	/*else if (!node.name.compare("mixamorig:LeftToeBase"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftToes)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightToeBase"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightToes)] = boneEntity;
+	}*/
+}
+
+void Import_HLHD_Bone(LoaderState& state, Entity armatureEntity, Entity boneEntity, const tinygltf::Node& node)
+{
+	auto get_humanoid = [&]() -> HumanoidComponent& {
+		HumanoidComponent* component = state.scene->humanoids.GetComponent(armatureEntity);
+		if (component == nullptr)
+		{
+			component = &state.scene->humanoids.Create(armatureEntity);
+			//component->default_look_direction = XMFLOAT3(0, 0, -1);
+		}
+		return *component;
+		};
+	/*std::string nodename = node.name;
+
+
+	for (int i = 0; i < nodename.length(); i++) {
+		nodename[i] = tolower(nodename[i]);
+	}*/
+
+
+	if (!node.name.compare("Bip01 Pelvis") || !node.name.compare("bip01 pelvis"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Hips)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 Spine") || !node.name.compare("bip01 spine"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Spine)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 Spine2") || !node.name.compare("bip01 spine1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Chest)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 Spine3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::UpperChest)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 Neck") || !node.name.compare("bip01 neck"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Neck)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 Head") || !node.name.compare("bip01 head"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Head)] = boneEntity;
+	}
+	else if (!node.name.compare("Mouth"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Jaw)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Clavicle") || !node.name.compare("bip01 l clavicle"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftShoulder)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Clavicle") || !node.name.compare("bip01 r clavicle"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightShoulder)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L UpperArm") || !node.name.compare("bip01 l upperarm"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftUpperArm)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R UpperArm") || !node.name.compare("bip01 r upperarm"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightUpperArm)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Forearm") || !node.name.compare("bip01 l forearm"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLowerArm)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Forearm") || !node.name.compare("bip01 r forearm"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLowerArm)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Hand") || !node.name.compare("bip01 l hand"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftHand)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Hand") || !node.name.compare("bip01 r hand"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightHand)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Finger0"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbMetacarpal)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Finger0"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbMetacarpal)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Finger01"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Finger01"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Finger02"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Finger02"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Finger2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Finger2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Finger21"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Finger21"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Finger22"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Finger22"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexDistal)] = boneEntity;
+	}
+	/*else if (!node.name.compare("mixamorig:LeftHandMiddle1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandMiddle1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandMiddle2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandMiddle2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandMiddle3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandMiddle3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandRing1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandRing1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandRing2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandRing2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandRing3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandRing3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandPinky1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandPinky1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandPinky2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandPinky2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:LeftHandPinky3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("mixamorig:RightHandPinky3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleDistal)] = boneEntity;
+	}*/
+	else if (!node.name.compare("Bip01 L Thigh") || !node.name.compare("bip01 l thigh"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftUpperLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Thigh") || !node.name.compare("bip01 r thigh"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightUpperLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Calf") || !node.name.compare("bip01 l calf"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLowerLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Calf") || !node.name.compare("bip01 r calf"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLowerLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Foot") || !node.name.compare("bip01 l foot"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftFoot)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Foot") || !node.name.compare("bip01 r foot"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightFoot)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Toe0") || !node.name.compare("bip01 l toe"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftToes)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Toe0") || !node.name.compare("bip01 r toe"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightToes)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 L Eye") || !node.name.compare("bip01 l eye"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftEye)] = boneEntity;
+	}
+	else if (!node.name.compare("Bip01 R Eye") || !node.name.compare("bip01 r eye"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightEye)] = boneEntity;
+	}
+}
+
+void Import_Valve_Bone(LoaderState& state, Entity armatureEntity, Entity boneEntity, const tinygltf::Node& node)
+{
+	auto get_humanoid = [&]() -> HumanoidComponent& {
+		HumanoidComponent* component = state.scene->humanoids.GetComponent(armatureEntity);
+		if (component == nullptr)
+		{
+			component = &state.scene->humanoids.Create(armatureEntity);
+			//component->default_look_direction = XMFLOAT3(0, 0, -1);
+		}
+		return *component;
+		};
+
+	if (!node.name.compare("ValveBiped.Bip01_Pelvis"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Hips)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_Spine"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Spine)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_Spine1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Chest)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_Spine2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Spine3)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_Spine4"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::UpperChest)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_Neck1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Neck)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_Head1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Head)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Clavicle"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftShoulder)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Clavicle"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightShoulder)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_UpperArm"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftUpperArm)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_UpperArm"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightUpperArm)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Elbow"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLowerArm)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Elbow"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLowerArm)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Hand"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftHand)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Hand"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightHand)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger0"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbMetacarpal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger0"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbMetacarpal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger01"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger01"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger02"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftThumbDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger02"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightThumbDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger1"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger11"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger11"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger12"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftIndexDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger12"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightIndexDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger2"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger21"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger21"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger22"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftMiddleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger22"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightMiddleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger3"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger31"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger31"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger32"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftRingDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger32"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightRingDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger4"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger4"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleProximal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger41"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger41"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleIntermediate)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Finger42"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLittleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Finger42"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLittleDistal)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Thigh"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftUpperLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Thigh"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightUpperLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Calf"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftLowerLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Calf"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightLowerLeg)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Foot"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftFoot)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Foot"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightFoot)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Toe0"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftToes)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Toe0"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightToes)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Eye"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftEye)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Eye"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightEye)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.forward"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::Forward)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Trapezius"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftTrapezius)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Trapezius"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightTrapezius)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Bicep"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftBicep)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Bicep"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightBicep)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Ulna"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftUlna)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Ulna"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightUlna)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_L_Wrist"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::LeftWrist)] = boneEntity;
+	}
+	else if (!node.name.compare("ValveBiped.Bip01_R_Wrist"))
+	{
+		get_humanoid().bones[size_t(HumanoidComponent::HumanoidBone::RightWrist)] = boneEntity;
 	}
 }
 

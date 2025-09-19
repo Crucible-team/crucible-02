@@ -271,7 +271,7 @@ namespace wi::scene
 				archive >> mesh_blend;
 			}
 
-			if (seri.GetVersion() >= 12)
+			if (seri.GetVersion() >= 99)
 			{
 				archive >> surfaceIndex;
 			}
@@ -455,7 +455,7 @@ namespace wi::scene
 				archive << mesh_blend;
 			}
 
-			if (seri.GetVersion() >= 12)
+			if (seri.GetVersion() >= 99)
 			{
 				archive << surfaceIndex;
 			}
@@ -2404,10 +2404,25 @@ namespace wi::scene
 			archive >> eye_rotation_max;
 			archive >> eye_rotation_speed;
 
-			for (auto& entity : bones)
+			if (seri.GetVersion() >= 10)
 			{
-				SerializeEntity(archive, entity, seri);
+				for (auto& entity : bones)
+				{
+					SerializeEntity(archive, entity, seri);
+				}
 			}
+
+			//Older scene's had less bones.
+			if (seri.GetVersion() < 10)
+			{
+				int limit = 55;
+				int count = 0;
+				for (auto& entity : bones) {
+					if (count++ >= limit) break;
+					SerializeEntity(archive, entity, seri);
+				}
+			}
+
 
 			if (seri.GetVersion() >= 1)
 			{
@@ -2435,10 +2450,25 @@ namespace wi::scene
 			archive << eye_rotation_max;
 			archive << eye_rotation_speed;
 
-			for (auto& entity : bones)
+			if (seri.GetVersion() < 10)
 			{
-				SerializeEntity(archive, entity, seri);
+				int limit = 55;
+				int count = 0;
+				for (auto& entity : bones) {
+					if (count++ >= limit) break;
+					SerializeEntity(archive, entity, seri);
+				}
 			}
+			else
+			{
+				for (auto& entity : bones)
+				{
+					SerializeEntity(archive, entity, seri);
+				}
+			}
+
+
+			
 
 			if (seri.GetVersion() >= 1)
 			{

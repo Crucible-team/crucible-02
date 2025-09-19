@@ -690,6 +690,7 @@ namespace wi::lua
 
 		ReturnToEditor(L);
 	}
+	
 
 	bool CompileFile(const char* filename, wi::vector<uint8_t>& dst)
 	{
