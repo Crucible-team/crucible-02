@@ -206,6 +206,7 @@ namespace wi::primitive
 			TMax = newTMax;
 		}
 		bool intersects(const AABB& b) const;
+		bool intersects(const AABB& b, float& dist) const; // Added this line
 		bool intersects(const Sphere& b) const;
 		bool intersects(const Sphere& b, float& dist) const;
 		bool intersects(const Sphere& b, float& dist, XMFLOAT3& direction) const;

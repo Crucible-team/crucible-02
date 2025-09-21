@@ -32,8 +32,21 @@ public:
 	float scale_snap = 1;
 	float rotate_snap = XM_PIDIV4;
 	float translate_snap = 1;
+	float bounds_snap = 1;
+	bool  bounds_snap_enabled = false;
 	float opacity = 1;
 	float darken_negative_axes = 1;
+
+	// Which face - handle(small circle) are we hovering / dragging ? -1 = none, 0..5 = X - , X + , Y - , Y + , Z - , Z +
+	int  bounds_hover_handle = -1;
+	int  bounds_active_handle = -1;
+
+	// World-space centers of each face (filled each frame from bounds_world)
+	XMFLOAT3 bounds_face_centers[6] = {};
+
+	// Visual size control (relative to gizmo distance scaler):
+	// Note: you already have `dist` which scales gizmo visuals globally:
+	float bounds_handle_radius_factor = 0.12f; // feel free to tweak (in world units ~ dist)
 
 	enum TRANSLATOR_STATE
 	{
@@ -45,6 +58,7 @@ public:
 		TRANSLATOR_XZ,
 		TRANSLATOR_YZ,
 		TRANSLATOR_XYZ,
+		TRANSLATOR_BOUNDS
 	} state = TRANSLATOR_IDLE;
 
 	XMMATRIX GetMirrorMatrix(TRANSLATOR_STATE state, const wi::scene::CameraComponent& camera) const;
@@ -55,7 +69,8 @@ public:
 	bool isTranslator = true;
 	bool isScalator = false;
 	bool isRotator = false;
-	bool IsEnabled() const { return isTranslator || isRotator || isScalator; }
+	bool isBoundSizer = false;
+	bool IsEnabled() const { return isTranslator || isRotator || isScalator || isBoundSizer; }
 	void SetEnabled(bool value)
 	{
 		if (value && !IsEnabled())
@@ -67,6 +82,7 @@ public:
 			isTranslator = false;
 			isScalator = false;
 			isRotator = false;
+			isBoundSizer = false;
 		}
 	}
 
@@ -81,5 +97,14 @@ public:
 	wi::scene::TransformComponent transform_start;
 	wi::vector<XMFLOAT4X4> matrices_start;
 	wi::vector<XMFLOAT4X4> matrices_current;
+
+	// Working AABBs in WORLD space (selection & drag)
+	wi::primitive::AABB bounds_world0;      // AABB at drag start
+	wi::primitive::AABB bounds_world;       // live AABB while dragging
+
+	// Drag state:
+	XMFLOAT3 bounds_drag_normal = XMFLOAT3(0, 0, 0); // face normal we are dragging along
+	XMFLOAT3 bounds_anchor = XMFLOAT3(0, 0, 0); // opposite anchor point (stays fixed)
+	XMFLOAT3 bounds_drag_start_hit = XMFLOAT3(0, 0, 0); // starting hit point on the drag plane
 };
 

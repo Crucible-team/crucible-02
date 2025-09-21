@@ -2325,6 +2325,7 @@ namespace wi::scene
 		XMFLOAT4 lookAtDeltaRotationState_Head = XMFLOAT4(0, 0, 0, 1);
 		XMFLOAT4 lookAtDeltaRotationState_LeftEye = XMFLOAT4(0, 0, 0, 1);
 		XMFLOAT4 lookAtDeltaRotationState_RightEye = XMFLOAT4(0, 0, 0, 1);
+		float lookAtRollOffset = 0.0f; // manual roll tweak for look-at (non-serialized)
 		bool lookAtBasisCached = false;
 		XMFLOAT3 lookAtBasisForward = XMFLOAT3(0, 0, 1);
 		XMFLOAT3 lookAtBasisUp = XMFLOAT3(0, 1, 0);

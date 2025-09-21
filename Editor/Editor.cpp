@@ -37,6 +37,7 @@ enum class EditorActions
 	MOVE_TOGGLE_ACTION,
 	ROTATE_TOGGLE_ACTION,
 	SCALE_TOGGLE_ACTION,
+	BOUNDSIZER_TOGGLE_ACTION,
 
 	// Engine actions
 	SCREENSHOT,
@@ -3085,9 +3086,22 @@ void EditorComponent::Update(float dt)
 		}
 		else if (main->actionMap.CheckInput(g_remap_action_hotkeys[(EditorActions::SCALE_TOGGLE_ACTION)]))
 		{
-			translator.isScalator = !translator.isScalator;
-			translator.isTranslator = false;
-			translator.isRotator = false;
+			if(translator.isScalator)
+			{
+				translator.isScalator = false;
+				translator.isTranslator = false;
+				translator.isRotator = false;
+				translator.isBoundSizer = true;
+			}
+			else
+			{
+				translator.isScalator = !translator.isScalator;
+				translator.isTranslator = false;
+				translator.isRotator = false;
+				translator.isBoundSizer = false;
+			}
+
+			
 		}
 	}
 

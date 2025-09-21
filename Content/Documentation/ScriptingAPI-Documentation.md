@@ -931,7 +931,7 @@ The scene holds components. Entity handles can be used to retrieve associated co
 - Component_Detach(Entity entity)  -- detaches entity from parent (if hierarchycomponent exists for it). Restores entity's original layer, and applies current transformation to entity
 - Component_DetachChildren(Entity parent)  -- detaches all children from parent, as if calling Component_Detach for all of its children
 
-- GetBounds() : AABB result  -- returns an AABB fully containing objects in the scene. Only valid after scene has been updated.
+- GetBounds(opt Entity entity) : AABB result  -- returns an AABB. If entity is not specified, it's the whole scene's AABB. If entity is specified, it's the entity's AABB. The entity's AABB is determined by Object-, Armature- or TransformComponent. Only valid after scene has been updated.
 - GetWeather() : WeatherComponent
 - SetWeather(WeatherComponent weather)
 

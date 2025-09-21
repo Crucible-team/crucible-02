@@ -753,6 +753,44 @@ namespace wi::primitive
 	{
 		return b.intersects(*this);
 	}
+	bool Ray::intersects(const wi::primitive::AABB& b, float& dist) const
+	{
+		float tmin = TMin;
+		float tmax = TMax;
+
+		XMVECTOR boundsMin = XMLoadFloat3(&b._min);
+		XMVECTOR boundsMax = XMLoadFloat3(&b._max);
+		XMVECTOR rayOrigin = XMLoadFloat3(&origin);
+		XMVECTOR rayDirection = XMLoadFloat3(&direction);
+		XMVECTOR rayDirectionInverse = XMLoadFloat3(&direction_inverse);
+
+		XMVECTOR t0 = XMVectorMultiply(XMVectorSubtract(boundsMin, rayOrigin), rayDirectionInverse);
+		XMVECTOR t1 = XMVectorMultiply(XMVectorSubtract(boundsMax, rayOrigin), rayDirectionInverse);
+
+		XMVECTOR t_min_vec = XMVectorMin(t0, t1);
+		XMVECTOR t_max_vec = XMVectorMax(t0, t1);
+
+		float t_min_x = XMVectorGetX(t_min_vec);
+		float t_min_y = XMVectorGetY(t_min_vec);
+		float t_min_z = XMVectorGetZ(t_min_vec);
+
+		float t_max_x = XMVectorGetX(t_max_vec);
+		float t_max_y = XMVectorGetY(t_max_vec);
+		float t_max_z = XMVectorGetZ(t_max_vec);
+
+		tmin = std::max(tmin, std::max(t_min_x, std::max(t_min_y, t_min_z)));
+		tmax = std::min(tmax, std::min(t_max_x, std::min(t_max_y, t_max_z)));
+
+		if (tmin > tmax)
+		{
+			return false;
+		}
+
+		dist = tmin;
+		return true;
+	}
+
+
 	bool Ray::intersects(const Sphere& b) const
 	{
 		return b.intersects(*this);

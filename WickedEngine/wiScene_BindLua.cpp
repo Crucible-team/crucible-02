@@ -3869,6 +3869,90 @@ int Scene_BindLua::Component_DetachChildren(lua_State* L)
 
 int Scene_BindLua::GetBounds(lua_State* L)
 {
+	int argc = wi::lua::SGetArgCount(L);
+	if (argc > 0)
+	{
+		wi::primitive::AABB defaultABB = wi::primitive::AABB(
+			XMFLOAT3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()),
+			XMFLOAT3(std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()));
+
+		Entity entity = (Entity)wi::lua::SGetLongLong(L, 1);
+		const ObjectComponent* object = scene->objects.GetComponent(entity);
+		if (object != nullptr)
+		{
+			size_t object_index = scene->objects.GetIndex(entity);
+			if (object_index < scene->aabb_objects.size())
+			{
+				Luna<AABB_BindLua>::push(L, scene->aabb_objects[object_index]);
+				return 1;
+			}
+		}
+
+		const LightComponent* light = scene->lights.GetComponent(entity);
+		if (light != nullptr)
+		{
+			size_t light_index = scene->lights.GetIndex(entity);
+			if (light_index < scene->aabb_lights.size())
+			{
+				Luna<AABB_BindLua>::push(L, scene->aabb_lights[light_index]);
+				return 1;
+			}
+			else
+			{
+				// light has no bound (could be a directional light), return empty:
+				Luna<AABB_BindLua>::push(L, defaultABB);
+				return 1;
+			}
+		}
+
+		const DecalComponent* decal = scene->decals.GetComponent(entity);
+		if (object != nullptr)
+		{
+			size_t decal_index = scene->decals.GetIndex(entity);
+			if (decal_index < scene->aabb_decals.size())
+			{
+				Luna<AABB_BindLua>::push(L, scene->aabb_decals[decal_index]);
+				return 1;
+			}
+		}
+
+		const EnvironmentProbeComponent* probe = scene->probes.GetComponent(entity);
+		if (probe != nullptr)
+		{
+			size_t probe_index = scene->probes.GetIndex(entity);
+			if (probe_index < scene->aabb_probes.size())
+			{
+				Luna<AABB_BindLua>::push(L, scene->aabb_probes[probe_index]);
+				return 1;
+			}
+		}
+
+		const wi::HairParticleSystem* hair = scene->hairs.GetComponent(entity);
+		if (hair != nullptr)
+		{
+			Luna<AABB_BindLua>::push(L, hair->aabb);
+		}
+
+		const ArmatureComponent* armature = scene->armatures.GetComponent(entity);
+		if (armature != nullptr)
+		{
+			Luna<AABB_BindLua>::push(L, armature->aabb);
+			return 1;
+		}
+
+		// default to transform if no other bound source found:
+		const TransformComponent* transform = scene->transforms.GetComponent(entity);
+		if (transform != nullptr)
+		{
+			wi::primitive::AABB aabb;
+			aabb.createFromHalfWidth(transform->GetPosition(), transform->GetScale());
+			Luna<AABB_BindLua>::push(L, aabb);
+			return 1;
+		}
+
+		return 0; // no bound for entity
+	}
+
 	Luna<AABB_BindLua>::push(L, scene->bounds);
 	return 1;
 }

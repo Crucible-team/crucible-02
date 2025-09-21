@@ -104,6 +104,50 @@ namespace Translator_Internal
 }
 using namespace Translator_Internal;
 
+static wi::primitive::AABB ComputeSelectionAABB_World(
+	wi::scene::Scene& scene,
+	const wi::vector<wi::ecs::Entity>& entities)
+{
+	using wi::primitive::AABB;
+	AABB out;
+	bool first = true;
+
+	for (auto e : entities)
+	{
+		// Prefer object’s mesh AABB in world space if available; fallback to transform center as tiny box:
+		auto* tf = scene.transforms.GetComponent(e);
+		if (!tf) continue;
+
+		AABB aabb;
+		{
+			// If the entity has an object and mesh data, query its world AABB:
+			auto* obj = scene.objects.GetComponent(e);
+			if (obj && obj->meshID != wi::ecs::INVALID_ENTITY)
+			{
+				auto* mesh = scene.meshes.GetComponent(obj->meshID);
+				if (mesh)
+				{
+					aabb = mesh->aabb;
+					// Mesh AABB is typically in local space; move to world by transform:
+					aabb = aabb.transform(tf->GetWorldMatrix());
+				}
+			}
+		}
+
+		if (aabb.getHalfWidth().x == 0 && aabb.getHalfWidth().y == 0 && aabb.getHalfWidth().z == 0)
+		{
+			// Fallback 1cm box at transform position:
+			XMFLOAT3 p = tf->GetPosition();
+			aabb.createFromHalfWidth(p, XMFLOAT3(0.01f, 0.01f, 0.01f));
+		}
+
+		out = first ? aabb : AABB::Merge(out, aabb);
+		first = false;
+	}
+	return out;
+}
+
+
 void Translator::Update(const CameraComponent& camera, const XMFLOAT4& currentMouse, const wi::Canvas& canvas)
 {
 	if (selected.empty())
@@ -136,6 +180,300 @@ void Translator::Update(const CameraComponent& camera, const XMFLOAT4& currentMo
 		{
 			selectedEntitiesNonRecursive.push_back(x.entity);
 		}
+	}
+
+	if (isBoundSizer)
+	{
+		PreTranslate();
+		if (!has_selected_transform)
+		{
+			state = TRANSLATOR_IDLE;
+			return;
+		}
+
+		const Ray ray = wi::renderer::GetPickRay((long)currentMouse.x, (long)currentMouse.y, canvas, camera);
+		const XMVECTOR rayOrigin = XMLoadFloat3(&ray.origin);
+		const XMVECTOR rayDir = XMLoadFloat3(&ray.direction);
+
+		XMFLOAT3 p = transform.GetPosition();
+		dist = std::max(wi::math::Distance(p, camera.Eye) * 0.05f, 0.0001f);
+
+		// Establish (or refresh) live bounds every frame:
+		bounds_world = ComputeSelectionAABB_World(scene, selectedEntitiesNonRecursive);
+
+		{
+			const XMFLOAT3 bmin = bounds_world.getMin();
+			const XMFLOAT3 bmax = bounds_world.getMax();
+			const float cx = (bmin.x + bmax.x) * 0.5f;
+			const float cy = (bmin.y + bmax.y) * 0.5f;
+			const float cz = (bmin.z + bmax.z) * 0.5f;
+
+			// Order: 0:X-, 1:X+, 2:Y-, 3:Y+, 4:Z-, 5:Z+
+			bounds_face_centers[0] = XMFLOAT3(bmin.x, cy, cz);
+			bounds_face_centers[1] = XMFLOAT3(bmax.x, cy, cz);
+			bounds_face_centers[2] = XMFLOAT3(cx, bmin.y, cz);
+			bounds_face_centers[3] = XMFLOAT3(cx, bmax.y, cz);
+			bounds_face_centers[4] = XMFLOAT3(cx, cy, bmin.z);
+			bounds_face_centers[5] = XMFLOAT3(cx, cy, bmax.z);
+		}
+
+		// Hover test (when not dragging): choose face/center
+		if (!dragging)
+		{
+			state = TRANSLATOR_IDLE;
+			bounds_drag_normal = XMFLOAT3(0, 0, 0);
+			bounds_hover_handle = -1;
+
+			// Face planes & normals of current bounds:
+			const XMFLOAT3 bmin = bounds_world.getMin();
+			const XMFLOAT3 bmax = bounds_world.getMax();
+			struct Face { XMFLOAT3 n; float d; XMFLOAT3 p0, p1; }; // plane normal, signed D, two opposite corners for bounds test
+
+			// Build 6 faces (axis-aligned):
+			Face faces[6] = {
+				{ XMFLOAT3(-1,0,0),  bmin.x, XMFLOAT3(bmin.x,bmin.y,bmin.z), XMFLOAT3(bmin.x,bmax.y,bmax.z) }, // X-
+				{ XMFLOAT3(1,0,0), -bmax.x, XMFLOAT3(bmax.x,bmin.y,bmin.z), XMFLOAT3(bmax.x,bmax.y,bmax.z) }, // X+
+				{ XMFLOAT3(0,-1,0),  bmin.y, XMFLOAT3(bmin.x,bmin.y,bmin.z), XMFLOAT3(bmax.x,bmin.y,bmax.z) }, // Y-
+				{ XMFLOAT3(0, 1,0), -bmax.y, XMFLOAT3(bmin.x,bmax.y,bmin.z), XMFLOAT3(bmax.x,bmax.y,bmax.z) }, // Y+
+				{ XMFLOAT3(0,0,-1),  bmin.z, XMFLOAT3(bmin.x,bmin.y,bmin.z), XMFLOAT3(bmax.x,bmax.y,bmin.z) }, // Z-
+				{ XMFLOAT3(0,0, 1), -bmax.z, XMFLOAT3(bmin.x,bmin.y,bmax.z), XMFLOAT3(bmax.x,bmax.y,bmax.z) }, // Z+
+			};
+
+			float best_t = std::numeric_limits<float>::max();
+			int   best_i = -1;
+
+			{
+				// simple ray-sphere test per face center:
+				float best_t = std::numeric_limits<float>::max();
+				const float handleR = bounds_handle_radius_factor * dist; // world-space
+				const float r2 = handleR * handleR;
+
+				for (int i = 0; i < 6; ++i)
+				{
+					const XMVECTOR C = XMLoadFloat3(&bounds_face_centers[i]);
+					const XMVECTOR m = rayOrigin - C;
+					const float b = XMVectorGetX(XMVector3Dot(m, rayDir));
+					const float c = XMVectorGetX(XMVector3Dot(m, m)) - r2;
+					// If ray origin is outside sphere (c>0) and pointing away (b>0), no hit:
+					if (c > 0.0f && b > 0.0f) continue;
+
+					const float discr = b * b - c;
+					if (discr < 0.0f) continue;
+
+					float t = -b - std::sqrt(discr);
+					if (t < 0) t = 0; // ray starts inside sphere
+					if (t < best_t) { best_t = t; bounds_hover_handle = i; }
+				}
+			}
+
+			for (int i = 0; i < 6; ++i)
+			{
+				const XMVECTOR N = XMLoadFloat3(&faces[i].n);
+				const float denom = XMVectorGetX(XMVector3Dot(N, rayDir));
+				if (std::abs(denom) < 1e-4f) continue;
+
+				// Plane point: any corner on that face; we use faces[i].p0
+				const XMVECTOR P0 = XMLoadFloat3(&faces[i].p0);
+				const float t = XMVectorGetX(XMVector3Dot(N, (P0 - rayOrigin))) / denom;
+				if (t <= 0) continue;
+
+				const XMVECTOR hit = rayOrigin + rayDir * t;
+				XMFLOAT3 H; XMStoreFloat3(&H, hit);
+
+				// Check if H lies within the face rectangle (other two axes within [min,max])
+				if (H.x >= bmin.x - 1e-4f && H.x <= bmax.x + 1e-4f &&
+					H.y >= bmin.y - 1e-4f && H.y <= bmax.y + 1e-4f &&
+					H.z >= bmin.z - 1e-4f && H.z <= bmax.z + 1e-4f)
+				{
+					// but constrain to the two axes that define the face:
+					int ax = (i < 2) ? 0 : (i < 4 ? 1 : 2); // axis normal
+					bool inFace = true;
+					if (ax != 0) inFace &= (H.x >= bmin.x - 1e-4f && H.x <= bmax.x + 1e-4f);
+					if (ax != 1) inFace &= (H.y >= bmin.y - 1e-4f && H.y <= bmax.y + 1e-4f);
+					if (ax != 2) inFace &= (H.z >= bmin.z - 1e-4f && H.z <= bmax.z + 1e-4f);
+
+					if (inFace && t < best_t) { best_t = t; best_i = i; }
+				}
+			}
+			if(bounds_hover_handle >= 0)
+			{
+				switch (bounds_hover_handle / 2) // 0=>X,1=>Y,2=>Z
+				{
+				case 0: state = TRANSLATOR_X; break;
+				case 1: state = TRANSLATOR_Y; break;
+				default: state = TRANSLATOR_Z; break;
+				}
+				// face normal by handle index:
+				static const XMFLOAT3 normals[6] = {
+					XMFLOAT3(-1,0,0), XMFLOAT3(1,0,0),
+					XMFLOAT3(0,-1,0), XMFLOAT3(0,1,0),
+					XMFLOAT3(0,0,-1), XMFLOAT3(0,0,1),
+				};
+				bounds_drag_normal = normals[bounds_hover_handle];
+			}
+			else if (best_i >= 0)
+			{
+				// Map face to translator state (so Draw() can color like axes/planes):
+				switch (best_i)
+				{
+				case 0: case 1: state = TRANSLATOR_X; break; // X- / X+
+				case 2: case 3: state = TRANSLATOR_Y; break; // Y- / Y+
+				case 4: case 5: state = TRANSLATOR_Z; break; // Z- / Z+
+				}
+				bounds_drag_normal = faces[best_i].n;
+
+				// Anchor is the opposite face corner (kept fixed while dragging this face):
+				bounds_anchor = XMFLOAT3(
+					(best_i == 0) ? bmax.x : (best_i == 1) ? bmin.x : (bmin.x + bmax.x) * 0.5f,
+					(best_i == 2) ? bmax.y : (best_i == 3) ? bmin.y : (bmin.y + bmax.y) * 0.5f,
+					(best_i == 4) ? bmax.z : (best_i == 5) ? bmin.z : (bmin.z + bmax.z) * 0.5f
+				);
+
+				bounds_hover_handle = best_i;
+			}
+			else
+			{
+				// Center handle (move whole box): reuse XYZ
+				if (bounds_world.intersects(ray))
+				{
+					state = TRANSLATOR_XYZ;
+				}
+			}
+		}
+
+		
+
+
+		// Begin/continue drag:
+		if (dragging || (state != TRANSLATOR_IDLE && wi::input::Press(wi::input::MOUSE_BUTTON_LEFT)))
+		{
+			XMVECTOR planeNormal;
+			if (state == TRANSLATOR_XYZ)
+			{
+				planeNormal = XMVector3Normalize(camera.GetAt());
+			}
+			else
+			{
+				XMVECTOR N = XMLoadFloat3(&bounds_drag_normal);
+				XMVECTOR wrong = XMVector3Cross(camera.GetAt(), N);
+				planeNormal = XMVector3Cross(wrong, N);
+			}
+
+			const XMVECTOR planePoint =
+				dragging
+				? XMLoadFloat3(&bounds_world0.getCenter())
+				: XMLoadFloat3(&bounds_world.getCenter());
+
+			const XMVECTOR plane = XMPlaneFromPointNormal(planePoint, planeNormal);
+
+			if (XMVectorGetX(XMVectorAbs(XMVector3Dot(planeNormal, rayDir))) < 0.001f)
+			{
+				state = TRANSLATOR_IDLE;
+				return;
+			}
+
+			const XMVECTOR hit = XMPlaneIntersectLine(plane, rayOrigin, rayOrigin + rayDir * camera.zFarP);
+
+			if (!dragging)
+			{
+				dragStarted = true;
+				transform_start = transform;
+				matrices_start = matrices_current;  // you already capture these for apply/undo
+				bounds_world0 = bounds_world;      // remember original AABB
+				bounds_active_handle = (state == TRANSLATOR_XYZ) ? -1 : bounds_hover_handle;
+
+				XMStoreFloat3(&bounds_drag_start_hit, hit);
+			}
+
+			
+			
+			XMFLOAT3 H; XMStoreFloat3(&H, hit);
+
+			if (state == TRANSLATOR_XYZ)
+			{
+				// Move: offset whole AABB by delta
+				XMFLOAT3 delta;
+				XMStoreFloat3(&delta, hit - XMLoadFloat3(&bounds_drag_start_hit));
+
+				// snapping:
+				if (wi::input::Down(wi::input::BUTTON::KEYBOARD_BUTTON_LCONTROL) || wi::input::Down(wi::input::BUTTON::KEYBOARD_BUTTON_RCONTROL) || bounds_snap_enabled)
+				{
+					auto s = bounds_snap > 0 ? bounds_snap : 1.0f;
+					delta.x = std::round(delta.x / s) * s;
+					delta.y = std::round(delta.y / s) * s;
+					delta.z = std::round(delta.z / s) * s;
+				}
+
+				transform = transform_start;
+				transform.Translate(XMLoadFloat3(&delta)); // live preview
+			}
+			else
+			{
+				// Face drag: measure signed distance along normal from original center plane:
+				const XMVECTOR N = XMLoadFloat3(&bounds_drag_normal);        // true face normal
+				const XMVECTOR H0 = XMLoadFloat3(&bounds_drag_start_hit);     // start hit on drag plane
+				float d = XMVectorGetX(XMVector3Dot(N, hit - H0));
+
+				// Snap:
+				if (wi::input::Down(wi::input::BUTTON::KEYBOARD_BUTTON_LCONTROL) || wi::input::Down(wi::input::BUTTON::KEYBOARD_BUTTON_RCONTROL) || bounds_snap_enabled)
+				{
+					auto s = bounds_snap > 0 ? bounds_snap : 1.0f;
+					d = std::round(d / s) * s;
+				}
+
+				// Build new target AABB by sliding one face:
+				wi::primitive::AABB target = bounds_world0;
+				XMFLOAT3 n; XMStoreFloat3(&n, N);
+
+				// Move the appropriate min/max along that axis:
+				if (n.x > 0.5f) target._max.x += d;
+				else if (n.x < -0.5f)target._min.x += d;
+				else if (n.y > 0.5f) target._max.y += d;
+				else if (n.y < -0.5f)target._min.y += d;
+				else if (n.z > 0.5f) target._max.z += d;
+				else if (n.z < -0.5f)target._min.z += d;
+
+				// Compute scale & translation that maps bounds_world0 to target
+				// NOTE: MVP assumes world-aligned (no complex rotation on selection).
+				const XMFLOAT3 half0 = bounds_world0.getHalfWidth();
+				const XMFLOAT3 s0 = XMFLOAT3(half0.x * 2.0f, half0.y * 2.0f, half0.z * 2.0f);
+				const XMFLOAT3 half1 = target.getHalfWidth();
+				const XMFLOAT3 s1 = XMFLOAT3(half1.x * 2.0f, half1.y * 2.0f, half1.z * 2.0f);
+				
+				XMFLOAT3 scale = XMFLOAT3(
+					s0.x > 1e-6f ? s1.x / s0.x : 1.0f,
+					s0.y > 1e-6f ? s1.y / s0.y : 1.0f,
+					s0.z > 1e-6f ? s1.z / s0.z : 1.0f
+				);
+
+				XMFLOAT3 c0 = bounds_world0.getCenter();
+				XMFLOAT3 c1 = target.getCenter();
+				XMFLOAT3 t = XMFLOAT3(c1.x - c0.x, c1.y - c0.y, c1.z - c0.z);
+
+				transform = transform_start;
+
+				// Apply scale in local-axis space:
+				// TODO: for rotated selections, decompose & apply in local basis aligned to selection rotation.
+				transform.Scale(scale);
+
+				// Then translate:
+				transform.Translate(XMLoadFloat3(&t));
+			}
+
+			transform.UpdateTransform();
+			dragging = true;
+			PostTranslate(); // keep parity with your other tools for live updates
+		}
+
+		// End drag:
+		if (!wi::input::Down(wi::input::MOUSE_BUTTON_LEFT))
+		{
+			if (dragging) { dragEnded = true; /* TODO: push history op if you do that elsewhere */ }
+			dragging = false;
+			bounds_active_handle = -1;
+		}
+
+		return; // <-- Bounds handled; skip the classic gizmo branch
 	}
 
 	if (IsEnabled())
@@ -559,6 +897,137 @@ void Translator::Draw(const CameraComponent& camera, const XMFLOAT4& currentMous
 	if (!IsEnabled() || selected.empty() || !has_selected_transform)
 	{
 		return;
+	}
+
+	if (isBoundSizer)
+	{
+		static bool shaders_loaded = false;
+		if (!shaders_loaded)
+		{
+			shaders_loaded = true;
+			static wi::eventhandler::Handle handle = wi::eventhandler::Subscribe(
+				wi::eventhandler::EVENT_RELOAD_SHADERS,
+				[](uint64_t) { Translator_Internal::LoadShaders(); }
+			);
+			Translator_Internal::LoadShaders();
+		}
+
+		GraphicsDevice* device = wi::graphics::GetDevice();
+		device->EventBegin("BoundsSizer", cmd);
+
+		// Draw wireframe AABB of current selection:
+		wi::primitive::AABB aabb = bounds_world;
+		XMFLOAT3 bmin = aabb.getMin();
+		XMFLOAT3 bmax = aabb.getMax();
+
+		// Make 12 edges as line list (8 corners -> 12 edges):
+		XMFLOAT3 c[8] = {
+			{bmin.x,bmin.y,bmin.z}, {bmax.x,bmin.y,bmin.z},
+			{bmin.x,bmax.y,bmin.z}, {bmax.x,bmax.y,bmin.z},
+			{bmin.x,bmin.y,bmax.z}, {bmax.x,bmin.y,bmax.z},
+			{bmin.x,bmax.y,bmax.z}, {bmax.x,bmax.y,bmax.z},
+		};
+		uint16_t edges[24] = {
+			0,1, 1,3, 3,2, 2,0, // bottom rectangle
+			4,5, 5,7, 7,6, 6,4, // top rectangle
+			0,4, 1,5, 2,6, 3,7  // verticals
+		};
+
+		// Allocate and draw:
+		device->BindPipelineState(&pso_wirepart, cmd);
+
+		struct Vtx { XMFLOAT4 p; XMFLOAT4 c; };
+		Vtx v[24];
+		for (int i = 0; i < 12; ++i) {
+			v[i * 2 + 0] = { XMFLOAT4(c[edges[i * 2 + 0]].x, c[edges[i * 2 + 0]].y, c[edges[i * 2 + 0]].z, 1), XMFLOAT4(1,1,1,1) };
+			v[i * 2 + 1] = { XMFLOAT4(c[edges[i * 2 + 1]].x, c[edges[i * 2 + 1]].y, c[edges[i * 2 + 1]].z, 1), XMFLOAT4(1,1,1,1) };
+		}
+
+		auto mem = device->AllocateGPU(sizeof(v), cmd);
+		std::memcpy(mem.data, v, sizeof(v));
+
+		const GPUBuffer* vbs[] = { &mem.buffer };
+		const uint32_t   strides[] = { sizeof(Vtx) };
+		const uint64_t   offsets[] = { mem.offset };
+		device->BindVertexBuffers(vbs, 0, 1, strides, offsets, cmd);
+
+		MiscCB sb;
+		XMMATRIX VP = camera.GetViewProjection(); // note: you already recompute a jitter-free VP earlier
+		XMStoreFloat4x4(&sb.g_xTransform, VP);    // feed world verts directly, so transform is just VP
+		sb.g_xColor = XMFLOAT4(1, 1, 1, opacity);
+		device->BindDynamicConstantBuffer(sb, CBSLOT_RENDERER_MISC, cmd);
+		device->Draw(24, 0, cmd);
+
+		// --- Face handle discs (six small circles) ---
+		{
+			device->BindPipelineState(&pso_solidpart, cmd);
+
+			const uint32_t segmentCount = 36;
+			const uint32_t vertexCount = segmentCount * 3; // triangle fan strip per circle
+			const float handleR = bounds_handle_radius_factor * dist;
+
+			for (int i = 0; i < 6; ++i)
+			{
+				// Color by axis family; boost alpha if active/hovered:
+				XMFLOAT4 col;
+				switch (i / 2) { // 0=>X,1=>Y,2=>Z
+				case 0: col = XMFLOAT4(1, 0, 0, 0.35f); break;
+				case 1: col = XMFLOAT4(0, 1, 0, 0.35f); break;
+				default:col = XMFLOAT4(0, 0, 1, 0.35f); break;
+				}
+				if (i == bounds_hover_handle) col.w = 0.55f;
+				if (i == bounds_active_handle) col.w = 0.75f;
+				col.w *= opacity;
+
+				// Allocate CPU-side vertex memory for this disc:
+				GraphicsDevice::GPUAllocation mem = device->AllocateGPU(sizeof(Translator_Internal::Vertex) * vertexCount, cmd);
+				uint8_t* dst = (uint8_t*)mem.data;
+
+				// Build a small screen-facing triangle fan at origin (we'll transform it into place by matrix below):
+				for (uint32_t s = 0; s < segmentCount; ++s)
+				{
+					const float a0 = (float)s / (float)segmentCount * XM_2PI;
+					const float a1 = (float)(s + 1) / (float)segmentCount * XM_2PI;
+
+					const Translator_Internal::Vertex verts[] = {
+						{ XMFLOAT4(0, 0, 0, 1),                           XMFLOAT4(1,1,1,1) },
+						{ XMFLOAT4(0, std::cos(a0) * handleR, std::sin(a0) * handleR, 1), XMFLOAT4(1,1,1,1) },
+						{ XMFLOAT4(0, std::cos(a1) * handleR, std::sin(a1) * handleR, 1), XMFLOAT4(1,1,1,1) },
+					};
+					std::memcpy(dst, verts, sizeof(verts));
+					dst += sizeof(verts);
+				}
+
+				const GPUBuffer* vbs[] = { &mem.buffer };
+				const uint32_t strides[] = { sizeof(Translator_Internal::Vertex) };
+				const uint64_t offsets[] = { mem.offset };
+				device->BindVertexBuffers(vbs, 0, 1, strides, offsets, cmd);
+
+				// Make the disc face the camera and sit at the face center:
+				// (This is the same “billboard circle” pattern you use for the rotator screen-facing circle)
+				XMMATRIX toScreenFacing =
+					XMMatrixRotationY(XM_PIDIV2) *
+					XMMatrixInverse(nullptr, XMMatrixLookToLH(XMVectorZero(),
+						XMVector3Normalize(XMLoadFloat3(&bounds_face_centers[i]) - camera.GetEye()),
+						camera.GetUp()));
+
+				MiscCB sb;
+				XMMATRIX VP = camera.GetViewProjection(); // you already use jitter-free VP above
+				XMStoreFloat4x4(&sb.g_xTransform,
+					toScreenFacing *
+					XMMatrixTranslation(bounds_face_centers[i].x, bounds_face_centers[i].y, bounds_face_centers[i].z) *
+					VP);
+				sb.g_xColor = col;
+				device->BindDynamicConstantBuffer(sb, CBSLOT_RENDERER_MISC, cmd);
+				device->Draw(vertexCount, 0, cmd);
+			}
+		}
+
+		// Optional: draw subtle filled quads on faces when hovered (using pso_solidpart) and color by state
+		// TODO: face “hot” coloring based on `state` (X/Y/Z → red/green/blue highlight like your other gizmos)
+
+		device->EventEnd(cmd);
+		return; // Bounds gizmo drawn; skip classic gizmo rendering
 	}
 
 	static bool shaders_loaded = false;

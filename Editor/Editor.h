@@ -30,6 +30,7 @@ public:
 	wi::gui::Button translateButton;
 	wi::gui::Button rotateButton;
 	wi::gui::Button scaleButton;
+	wi::gui::Button boundsizerButton;
 
 	wi::gui::Button physicsButton;
 
